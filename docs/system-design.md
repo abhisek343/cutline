@@ -69,12 +69,13 @@ Version 1 runs on one Linux host:
 - the Cutline coordinator runs as a local process;
 - native Go fixtures run as child processes;
 - Temporal, PostgreSQL, and fixture dependencies run in pinned containers;
-- the SDK connects through a private Unix-domain control socket;
+- the SDK connects through a private Unix-domain control socket, with an
+  authenticated loopback TCP fallback when the host forbids Unix sockets;
 - the coordinator owns the test run and tears down resources;
 - reports and capsules are local files.
 
-A loopback TCP fallback may be added for environments without Unix sockets, but
-remote multi-host execution is out of scope.
+The loopback TCP fallback binds only to `127.0.0.1` and uses the same per-run
+authentication token. Remote multi-host execution is out of scope.
 
 ## 5. Canonical execution lifecycle
 

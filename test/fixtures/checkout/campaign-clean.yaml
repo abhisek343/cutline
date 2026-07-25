@@ -1,0 +1,39 @@
+apiVersion: cutline.dev/v1alpha1
+kind: Campaign
+name: checkout-clean
+
+target:
+  adapter: go-test
+  command:
+    - go
+    - test
+    - ./test/fixtures/checkout
+    - -run
+    - ^TestCutlineTarget$
+    - -count=1
+    - -args
+    - -cutline-fixture-mode=clean
+
+exploration:
+  strategy: single-cut
+  maxSchedules: 1
+  maxPointVisits: 10
+  scheduleTimeout: 30s
+  drainTimeout: 5s
+  cancelAt: [before-charge]
+  seed: 1
+
+contracts:
+  - name: no-charge-after-cancel
+    version: 1
+    severity: critical
+    requires:
+      - cancellation.observed
+      - effects.authoritative_commit
+      - drain.registered_tasks
+    boundary: cancellation-observed
+    expression: 'builtin.no_effect_after_cancel_observed("payment.charge")'
+
+output:
+  directory: .cutline
+  format: text

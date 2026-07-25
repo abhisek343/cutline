@@ -26,15 +26,26 @@ The target service adds explicit instrumentation around cancellation-sensitive
 boundaries:
 
 ```go
-cutline.Point(ctx, "before-charge")
+if err := cutline.Point(ctx, "before-charge"); err != nil {
+    return err
+}
 
-effect := cutline.Effect(ctx, cutline.EffectSpec{
+effect, err := cutline.BeginEffect(ctx, cutline.EffectSpec{
     Kind:           "payment.charge",
     IdempotencyKey: orderID,
+    EvidenceSource: "payment-ledger",
 })
+if err != nil {
+    return err
+}
+if err := effect.Attempt(ctx); err != nil {
+    return err
+}
 
-err := gateway.Charge(ctx, orderID, amount)
-effect.Complete(err)
+if err := gateway.Charge(ctx, orderID, amount); err != nil {
+    return effect.Fail(ctx, err)
+}
+return effect.Commit(ctx)
 ```
 
 A campaign tells Cutline where cancellation may be injected and what must remain

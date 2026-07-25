@@ -112,7 +112,7 @@ stateDiagram-v2
 
 | Boundary | Protocol | Failure treatment |
 |---|---|---|
-| CLI to target SDK | Versioned local JSON envelopes over Unix socket | Disconnect makes evidence incomplete |
+| CLI to target SDK | Versioned JSON over private Unix socket or authenticated loopback TCP | Disconnect makes evidence incomplete |
 | Coordinator to PostgreSQL | SQL transaction | Stop schedule progression on durable-write failure |
 | Coordinator to Temporal | Temporal Go SDK | Adapter classifies expected versus infrastructure failure |
 | Target to fixtures | Target-specific test protocol | Effect evidence must identify authoritative source |

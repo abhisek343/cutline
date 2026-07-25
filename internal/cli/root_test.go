@@ -55,12 +55,32 @@ contracts:
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, err := execute(t, "run", "--campaign", path)
+	stdout, _, err := execute(t, "run", "--campaign", path, "--validate-only")
 	if err != nil {
 		t.Fatalf("run error = %v", err)
 	}
 	if !strings.Contains(stdout, `campaign "test" validated`) {
 		t.Fatalf("run output = %q", stdout)
+	}
+}
+
+func TestExitCodes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		err  error
+		code int
+	}{
+		{nil, 0},
+		{ErrViolation, 2},
+		{ErrInconclusive, 3},
+		{ErrInvalidRun, 4},
+		{errors.New("boom"), 1},
+	}
+	for _, tt := range tests {
+		if got := ExitCode(tt.err); got != tt.code {
+			t.Errorf("ExitCode(%v) = %d, want %d", tt.err, got, tt.code)
+		}
 	}
 }
 
