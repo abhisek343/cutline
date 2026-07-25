@@ -38,4 +38,21 @@ jobs:
         run: go test -race ./...
 
       - name: Build
-        run: go build -trimpath ./cmd/cutline
+        run: go build -trimpath -o /tmp/cutline ./cmd/cutline
+
+  integration-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test PostgreSQL schema
+        run: go test -tags=integration ./internal/ledger -run TestPostgresSchemaConstraintsAndFreeze -count=1 -timeout=5m

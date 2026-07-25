@@ -16,9 +16,10 @@ small, deterministic counterexamples.
 
 ## Status
 
-Cutline is in the design-baseline phase. The repository currently contains the
-contracts and implementation plan that code must satisfy. The first build target
-is one end-to-end native Go fixture, not a broad framework.
+Cutline is under active implementation. The deterministic model, campaign CLI,
+native Go SDK/control path, single-cut scheduler, and faulty/correct checkout
+benchmark are runnable. PostgreSQL persistence, CEL, exploration, capsules,
+reports, and Temporal support are being delivered in that order.
 
 ## What a test looks like
 
@@ -82,6 +83,29 @@ cutline minimize <run-id>
 cutline replay capsules/<failure-id>
 cutline report <run-id> --format html
 ```
+
+The current native demonstration is:
+
+```text
+go build -o ./bin/cutline ./cmd/cutline
+./bin/cutline run --campaign test/fixtures/checkout/campaign-faulty.yaml
+./bin/cutline run --campaign test/fixtures/checkout/campaign-clean.yaml
+```
+
+The faulty campaign exits `2` with a violation; the clean campaign exits `0`.
+
+## Development
+
+Run the fast local gate with `make check`. PostgreSQL integration tests use a
+pinned Testcontainers image:
+
+```text
+make integration
+```
+
+For manual database work, `docker compose up -d postgres` exposes the local-only
+database on `127.0.0.1:54329`. The CI integration job starts its own isolated
+container and applies every embedded migration twice to verify idempotency.
 
 ## Core result
 
