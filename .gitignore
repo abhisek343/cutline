@@ -1,0 +1,21 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Cutline runtime data
+/.cutline/
+/capsules/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
