@@ -163,7 +163,7 @@ func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule,
 		Campaign: spec, RunID: result.RunID, AttemptID: result.AttemptID,
 		Execution: capsule.Execution{Status: string(result.Status), ExitCode: result.ExitCode, Duration: result.Duration},
 		Schedule:  schedule, Snapshot: result.Evidence, View: result.View, Effects: result.Effects,
-		Evaluations: result.Evaluations, Signatures: result.Signatures, Minimization: &minimization,
+		Evaluations: result.Evaluations, Signatures: result.Signatures, FailureSignature: minimization.Target, Minimization: &minimization,
 	}, destination)
 }
 
