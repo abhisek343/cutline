@@ -16,6 +16,7 @@ ADRs record decisions that materially constrain Cutline's design.
 - [0003: CEL over a typed frozen evidence model](0003-cel-contracts.md)
 - [0004: PostgreSQL as the authoritative evidence ledger](0004-postgresql-evidence-ledger.md)
 - [0005: Versioned runtime adapter boundary](0005-versioned-runtime-adapters.md)
+- [0006: Local-only Temporal history ingestion](0006-local-only-temporal-history-ingestion.md)
 
 ## Template
 
