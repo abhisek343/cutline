@@ -1,103 +1,31 @@
-# Coding Standards
+# Coding standards
 
-## Go baseline
+## Go
 
-- Use the supported stable Go version pinned by the repository toolchain.
-- Keep `gofmt` clean.
-- Prefer the standard library until a dependency removes measured complexity.
-- Return explicit errors; do not use panic for expected target or campaign
-  failures.
-- Wrap errors with operation and stable category while preserving `errors.Is`
-  and `errors.As`.
-- Pass `context.Context` as the first parameter for cancellable operations.
-- Never store contexts in long-lived structs.
+Use standard Go formatting and package conventions. Keep exported APIs small and document exported identifiers when the name does not explain the contract.
 
-## Package design
+Prefer values and explicit return errors over hidden mutable state. Keep the public SDK independent of storage, CLI, and runtime-specific dependencies.
 
-- Packages own one coherent responsibility.
-- Keep public API in `pkg/cutline` intentionally small.
-- Do not export types only to make tests convenient.
-- Define interfaces at the consumer boundary.
-- Avoid `util`, `common`, and cyclic domain abstractions.
-- Keep canonical model code free of database, CLI, and runtime SDK imports.
+## Events and cancellation
 
-## Cancellation
+Treat cancellation request, delivery, observation, target return, drain completion, and effect commitment as separate facts. Do not turn missing evidence into a negative observation.
 
-- Check and propagate the cause where semantics require it.
-- Do not convert all cancellation into generic failure.
-- Make cleanup deadlines independent when cleanup must continue safely.
-- Register child work before starting it.
-- Never launch an untracked goroutine in core execution paths.
-- Make repeated cancellation idempotent.
-- Tests must control synchronization through checkpoints, not sleeps.
+Canonical events need stable identities and deterministic ordering. Adapter code may translate runtime details, but it must not redefine event semantics.
 
 ## Concurrency
 
-- Document goroutine ownership and termination.
-- Prefer one owner for mutable scheduler state.
-- Close channels only from their owning sender.
-- Bound queues and worker counts.
-- Treat timeout as a safety valve, not deterministic coordination.
-- Include race tests for cancellation/release and shutdown paths.
+State ownership should be clear from the package API. Avoid sharing scheduler state across goroutines. Make cleanup idempotent and use bounded context timeouts for external work.
 
-## Data and events
+Run the race detector for changes involving control, scheduling, ingestion, or persistence.
 
-- Use opaque typed IDs.
-- Use enums with explicit unknown values.
-- Validate state transitions centrally.
-- Keep accepted evidence immutable.
-- Use UTC wall time for display and monotonic duration for local measurement.
-- Do not derive cross-process causal order from timestamps.
-- Version externally persisted payloads.
+## Tests
 
-## Database
+Write tests at the lowest useful layer, then add a fixture or integration test for cross-package behavior. A failure minimizer test must assert the signature, not merely a non-zero exit.
 
-- Use explicit transactions and isolation requirements.
-- Include `run_id` in run-owned keys and queries.
-- Make ingest idempotent by session and local sequence.
-- Prefer append-only evidence after acceptance.
-- Keep migrations forward-only until a release policy exists.
-- Test constraints in PostgreSQL, not only with mocks.
+Use the intentionally faulty and corrected fixtures to demonstrate a real contract difference. Tests that require Docker should be tagged or invoked through the matching Make target.
 
-## CEL contracts
+## Dependencies and docs
 
-- Expose typed, immutable values.
-- Keep helpers pure and deterministic.
-- Set expression cost limits.
-- Reject unsupported major environments.
-- Avoid raw JSON traversal when a typed field can exist.
+Avoid adding dependencies for simple standard-library work. New runtime or persistence dependencies need an ADR when they affect deployment, compatibility, or the package boundary.
 
-## Logging
-
-- Use structured logs with run and attempt identity.
-- Do not log secrets, full environment, authorization headers, or unrestricted
-  payloads.
-- Logs aid diagnosis but never substitute for canonical evidence.
-
-## Testing
-
-- Prefer table-driven unit tests and explicit fixture assertions.
-- Use deterministic seeds and stable IDs.
-- Avoid sleeps; use barriers and acknowledgements.
-- Test invalid and incomplete evidence.
-- Keep golden files small and schema-focused.
-- Clean external resources by run ID.
-
-## Dependencies
-
-Every new dependency needs:
-
-- purpose and alternatives considered;
-- maintenance and license check;
-- security and transitive-dependency review;
-- version pin or reproducible resolution;
-- line/complexity tradeoff.
-
-Core planned dependencies are Cobra, CEL-Go, Temporal Go SDK, a PostgreSQL driver,
-and Testcontainers for Go.
-
-## Comments and documentation
-
-Comments explain invariants, ownership, ordering, and non-obvious failure
-semantics. Do not narrate straightforward code. Public APIs include behavior
-under cancellation and concurrency.
+Update the README when commands or supported scope change. Put detailed design rationale in an ADR, not in code comments.

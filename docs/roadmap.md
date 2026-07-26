@@ -1,183 +1,21 @@
-# Roadmap and Line Budget
+# Roadmap
 
-## Delivery principle
+The native Go path, evidence ledger, contracts, exploration, minimization, capsules, reports, and local Temporal history ingestion are implemented.
 
-Build one complete evidence loop before adding breadth:
+## Next work
 
-```text
-instrument -> cancel -> observe -> evaluate -> minimize -> replay
-```
+1. Add a Temporal worker instrumentation protocol.
+2. Run checkpoint-driven Temporal campaigns against local workers.
+3. Add faulty and corrected Temporal fixtures with stable capsule replay.
+4. Add more native benchmark pairs and publish search bounds.
+5. Prepare installation, compatibility, and release documentation for a pre-release tag.
 
-Each milestone must leave the repository demonstrable and testable.
+The Temporal work is intentionally local-first. It must preserve the existing rules: external effect outcomes remain explicit, evidence gaps are inconclusive, and replay preserves the failure signature.
 
-## Milestone 0 — Contracts and skeleton
+## Scope guardrail
 
-Deliver:
+The original target is roughly 14,400 meaningful lines, including tests and fixtures. The current implementation is below that limit. A full Temporal campaign runner is likely to exceed it, so it should come with an ADR that explains the revised budget and any scope displaced.
 
-- Go module and CLI skeleton;
-- package boundaries;
-- campaign v1alpha1 types;
-- canonical IDs, events, and state machines;
-- deterministic serialization;
-- first ADRs and schema fixtures;
-- aggregate check command.
+## Deferred work
 
-Acceptance:
-
-- invalid transitions are exhaustively tested;
-- campaign normalization has a stable digest;
-- no runtime or database dependency leaks into the model;
-- documentation and code agree.
-
-## Milestone 1 — Native Go vertical slice
-
-Deliver:
-
-- minimal public SDK: `Point`, `Spawn`, `Effect`, and `Release`;
-- local control socket;
-- native Go test adapter;
-- single-cut scheduler;
-- in-memory evidence path;
-- intentionally faulty checkout fixture;
-- terminal CLI verdict.
-
-Acceptance:
-
-- cancellation at `before-charge` exposes the seeded violation;
-- a clean fixture passes;
-- control disconnect is inconclusive;
-- race detector passes;
-- repeated seed gives the same schedule and violation identity.
-
-## Milestone 2 — Durable evidence and contracts
-
-Deliver:
-
-- PostgreSQL migrations and repositories;
-- immutable evidence freeze;
-- causal graph;
-- CEL environment and capability requirements;
-- effect and resource ledgers;
-- JSON/JSONL export.
-
-Acceptance:
-
-- event loss cannot pass;
-- dependency ledger reconciles charge outcome;
-- built-in and CEL invariants agree on benchmark cases;
-- schema constraints reject contradictory evidence.
-
-## Milestone 3 — Exploration and minimization
-
-Deliver:
-
-- discovery pass;
-- boundary-pair and bounded-prefix exploration;
-- state deduplication with disclosed bounds;
-- failure signatures;
-- deterministic delta-debugging minimizer;
-- stability confirmation.
-
-Acceptance:
-
-- every seeded native fixture bug is found within its declared bound;
-- noisy reference schedule is reduced by at least 50%;
-- reduced schedule preserves the same signature;
-- budget exhaustion returns an honest best-known result.
-
-## Milestone 4 — Failure capsules and reports
-
-Deliver:
-
-- capsule schema and integrity checks;
-- exact replay command;
-- static HTML timeline and causal graph;
-- minimization audit;
-- redaction and safe import.
-
-Acceptance:
-
-- reference capsule replays at least 19 of 20 times;
-- report names the cut point, offending effect, and causal path;
-- path traversal and active-content payloads are rejected;
-- target digest mismatch is explicit.
-
-## Milestone 5 — Temporal adapter
-
-Deliver:
-
-- local Temporal Testcontainers environment;
-- workflow and activity instrumentation;
-- cancellation delivery/observation translation;
-- Temporal history reconciliation;
-- activity heartbeat/effect fixture;
-- shared contract vocabulary.
-
-Acceptance:
-
-- Temporal seeded bug is discovered and replayed;
-- native and Temporal fixtures use the same canonical contract;
-- external activity effect ambiguity is represented as unknown, not guessed;
-- Temporal packages remain isolated to the adapter.
-
-## Milestone 6 — Release hardening
-
-Deliver:
-
-- five faulty/corrected benchmark pairs;
-- CI matrix and race checks;
-- performance baselines;
-- compatibility policy;
-- installation and tutorial documentation;
-- first tagged pre-release.
-
-Acceptance:
-
-- all product success criteria pass;
-- no unresolved critical security issue;
-- line budget is within tolerance;
-- two external users can reproduce a fixture from documentation;
-- novelty claim is supported by public benchmark evidence.
-
-## Meaningful line budget
-
-Target total: **approximately 14,400 lines**, including tests and fixtures,
-excluding generated code, vendored dependencies, migrations generated by tools,
-and report artifacts.
-
-| Area | Budget |
-|---|---:|
-| Scheduler, search, and minimization | 4,200 |
-| Event graph, ledger, and contracts | 2,800 |
-| Instrumentation SDK | 1,200 |
-| Native Go and Temporal adapters | 2,200 |
-| CLI and reports | 1,000 |
-| Fixtures and tests | 3,000 |
-| **Total** | **14,400** |
-
-The allocation is a guardrail, not an invitation to fill every line. A milestone
-may borrow up to 10% from another area with an explicit review. Exceeding the
-total by more than 10% requires an ADR that removes or postpones scope.
-
-## Deferred backlog
-
-- runtime adapters beyond native Go and Temporal;
-- macOS and Windows control transports;
-- guided coverage integration;
-- distributed coordinator;
-- hosted report sharing;
-- IDE extension;
-- automatic binary instrumentation;
-- general network/process/clock chaos;
-- production execution.
-
-## Release gates
-
-No pre-release tag until:
-
-- end-to-end native and Temporal loops work;
-- capsules pass replay stability;
-- incomplete evidence cannot pass;
-- reports and capsule import are security-tested;
-- benchmark results and search bounds are published;
-- all supported schemas have compatibility tests.
+Remote or production execution, distributed scheduling, hosted reports, IDE integration, automatic instrumentation, and other workflow engines remain out of scope.

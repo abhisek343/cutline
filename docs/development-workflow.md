@@ -1,113 +1,59 @@
-# Development Workflow
+# Development workflow
 
-## Working agreement
+## Prerequisites
 
-Every change starts from a behavioral claim and ends with reproducible evidence.
-Avoid large horizontal scaffolding changes that cannot run end to end.
+- Go 1.26
+- Docker, for PostgreSQL and Temporal integration tests
 
-## Before coding
+Run `go mod download` once after cloning. The standard local check is:
 
-1. Select one roadmap acceptance criterion.
-2. Read the relevant contracts and ADRs.
-3. Inspect current code, tests, and open assumptions.
-4. Write the target failure or passing fixture first when practical.
-5. List normal, cancellation, timeout, duplicate, crash, and incomplete-evidence
-   paths.
-6. Define the exact evidence needed to judge the behavior.
-7. Set the expected line-budget impact.
-
-## Vertical-slice format
-
-A slice should cross only the layers necessary to demonstrate one behavior:
-
-```text
-fixture -> SDK/adapter -> scheduler -> evidence -> contract -> CLI result
+```sh
+make check
 ```
 
-Example first slice:
+It formats Go files, runs `go vet`, unit tests, and the race detector.
 
-- one checkout fixture;
-- one `before-charge` point;
-- one explicit context cancellation;
-- one payment effect;
-- one built-in invariant;
-- one deterministic CLI failure.
+## Before changing behavior
 
-Do not build generic minimization, HTML, or Temporal abstractions before this
-slice works.
+Read the relevant package tests and the matching document. For a change that affects cancellation, effect timing, or evidence completeness, also read [contracts](contracts.md).
 
-## Branch and commit discipline
+Keep a change small enough to run through the full loop:
 
-- keep `main` releasable;
-- use small topic branches;
-- stage only files belonging to the slice;
-- use terse imperative commit subjects;
-- do not mix generated artifacts or local capsules into source commits;
-- document schema and contract changes in the same commit.
+```text
+instrument -> run -> freeze evidence -> evaluate -> minimize -> replay
+```
 
-## Validation ladder
+Do not add a new adapter or infrastructure service just to make a feature easier to demonstrate. An architecture decision is appropriate when a change alters persistence, the public SDK, adapter compatibility, or the meaning of canonical evidence.
 
-Run the cheapest relevant check first:
+## Test commands
 
-1. focused package test;
-2. affected fixture;
-3. all unit tests;
-4. race detector;
-5. integration tests;
-6. exact capsule replay;
-7. full benchmark suite.
+```sh
+make check
+make integration
+make temporal-integration
+make release
+```
 
-Record skipped checks honestly.
+`make integration` and `make temporal-integration` require Docker. CI runs both independently.
 
-## Debugging discipline
-
-When a test fails:
-
-1. preserve the seed, campaign, and evidence;
-2. classify target bug, harness bug, infrastructure failure, or flaky replay;
-3. form one hypothesis;
-4. add the smallest diagnostic evidence;
-5. rerun the same schedule;
-6. avoid unrelated rewrites;
-7. remove temporary diagnostics or promote them into canonical evidence.
-
-## Schema workflow
-
-For a canonical schema change:
-
-1. update model and validation;
-2. add compatibility or rejection tests;
-3. update database migration;
-4. update JSON examples;
-5. update CEL environment if exposed;
-6. update capsule schema;
-7. write or amend an ADR;
-8. document migration impact.
-
-Silent reinterpretation is forbidden.
-
-## Definition of done
-
-A slice is done when:
-
-- acceptance criteria pass;
-- relevant edge cases are tested;
-- `go test -race ./...` passes when concurrency changed;
-- fixture and CLI behavior were manually probed;
-- generated evidence was inspected;
-- documentation is current;
-- no unrelated diff remains;
-- line-budget impact is reported;
-- remaining uncertainty is explicit.
+For a native manual probe, build the CLI and run the faulty and clean checkout campaigns from the README. The faulty campaign must return a violation; the clean campaign must pass.
 
 ## Review checklist
 
-- Are cancellation boundaries named precisely?
-- Can missing evidence produce a false pass?
-- Is effect commitment authoritative?
-- Are tasks and effects stably identified?
-- Does replay preserve the same failure signature?
-- Is ordering causal or merely timestamp-based?
-- Is cleanup idempotent?
-- Is target-controlled report content escaped?
-- Is the new abstraction required by the current slice?
+Before opening a change:
+
+- Run focused tests, then `make check`.
+- Add a regression test for the bug or edge case.
+- Run the real fixture affected by the change.
+- Replay any new failure capsule and confirm its signature.
+- Check that missing or ambiguous evidence becomes inconclusive, not pass.
+- Keep docs and campaign examples in sync.
+- Review `git diff` for generated files and unrelated formatting.
+
+## Database changes
+
+Migrations are embedded and applied by the integration tests. Add a new migration; do not edit an applied one. Test both a fresh database and repeated application of the migration.
+
+## Safety
+
+Campaigns are local-development tools. Do not extend them to run against production dependencies, remote Temporal endpoints, or unredacted payload capture without an explicit design review.

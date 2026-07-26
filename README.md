@@ -1,40 +1,39 @@
 # Cutline
 
-**Find the business actions that keep happening after cancellation.**
+Cutline is a local test tool for finding work that continues after a Go context or Temporal workflow has been cancelled. It pauses an instrumented target at named checkpoints, tries a bounded set of cancellation schedules, and checks the resulting evidence against business rules.
 
-Cutline is a deterministic cancellation-correctness tester for Go services and
-Temporal workflows. It injects cancellation at named checkpoints, records what
-the program does next, evaluates business-level invariants, minimizes a failure,
-and exports a replayable failure capsule.
+It is useful when "the request returned cancelled" is not enough. A payment, email, retry, or background task may still have continued.
 
-Cancellation in Go is cooperative. Calling `cancel()` or cancelling a Temporal
-workflow does not prove that every goroutine, activity, retry, transaction, or
-external side effect stopped safely. A request can return "cancelled" while a
-payment is still charged, an email is still sent, a lock is leaked, or a retry
-continues in the background. Cutline is designed to expose those failures as
-small, deterministic counterexamples.
+## What it does
 
-## Status
+- Controls explicitly instrumented checkpoints in Go tests.
+- Records cancellation, task, and effect events in one canonical timeline.
+- Evaluates CEL contracts such as "do not charge after cancellation".
+- Reduces a failing schedule and writes a replayable failure capsule.
+- Renders capsules as JSON or a standalone HTML report.
+- Reads completed workflow history from a local Temporal server.
 
-Cutline is under active implementation. The deterministic model, campaign CLI,
-native Go SDK/control path, PostgreSQL evidence ledger, typed causal view,
-checkpoint discovery, bounded single-cut enumeration, boundary-pair and
-bounded-prefix exploration, typed CEL contracts, and the faulty/correct checkout
-benchmark are runnable, with stable failure signatures attached to violations
-and a bounded deterministic minimizer that preserves those signatures. Stable
-violations can now be packaged as checksummed, redaction-aware failure capsules
-and replayed with exact-signature comparison. Those capsules also render as
-escaped static HTML or machine-readable JSON reports. The Temporal adapter now
-uses the Temporal Go SDK to read a completed local workflow execution over
-gRPC and translate its authoritative history into the same canonical events.
-Activity effect outcomes use explicit identities and preserve unknown dependency
-results instead of guessing a commit. The reference release gate also checks 20
-faulty replays (at least 19 exact), a clean pass, and the 14,400-line budget.
+Cutline does not prove an arbitrary concurrent program correct. It explores only the checkpoint schedules declared by the target.
 
-## What a test looks like
+## Quick start
 
-The target service adds explicit instrumentation around cancellation-sensitive
-boundaries:
+Cutline currently targets Go 1.26 on Linux. Build the CLI and run the included checkout fixture:
+
+```sh
+go build -o ./bin/cutline ./cmd/cutline
+
+# Expected: exits 2 and reports no-charge-after-cancel.
+./bin/cutline run --campaign test/fixtures/checkout/campaign-faulty.yaml
+
+# Expected: exits 0.
+./bin/cutline run --campaign test/fixtures/checkout/campaign-clean.yaml
+```
+
+The faulty fixture intentionally starts a charge after cancellation; the clean fixture stops before creating the effect.
+
+## Instrumenting a Go target
+
+Add checkpoints where cancellation timing matters, then record external side effects with a stable idempotency key and an authoritative evidence source.
 
 ```go
 if err := cutline.Point(ctx, "before-charge"); err != nil {
@@ -59,12 +58,12 @@ if err := gateway.Charge(ctx, orderID, amount); err != nil {
 return effect.Commit(ctx)
 ```
 
-A campaign tells Cutline where cancellation may be injected and what must remain
-true:
+A campaign selects the target, exploration bound, and contracts:
 
 ```yaml
 apiVersion: cutline.dev/v1alpha1
 kind: Campaign
+name: checkout
 
 target:
   adapter: go-test
@@ -77,6 +76,7 @@ exploration:
 contracts:
   - name: no-charge-after-cancel
     severity: critical
+    boundary: cancellation-observed
     expression: >
       !effects.exists(e,
         e.kind == "payment.charge" &&
@@ -84,110 +84,53 @@ contracts:
         e.startedAfter(cancel.observedAt))
 ```
 
-The intended CLI flow is:
+## Working with failures
 
-```text
-cutline doctor
-cutline run --campaign cutline.yaml
+For a stable violation, create and replay a capsule:
+
+```sh
 cutline minimize --campaign cutline.yaml --output capsules/checkout-cancel
-cutline replay capsules/<failure-id>
-cutline report <run-id> --format html
+cutline replay capsules/checkout-cancel
+cutline report capsules/checkout-cancel --format html --output report.html
 ```
 
-The current native demonstration is:
+A capsule contains the minimized release schedule, canonical events, derived effect and causal data, contract result, checksums, and redacted replay metadata. See [failure capsules](docs/failure-capsules.md) for the layout.
 
-```text
-go build -o ./bin/cutline ./cmd/cutline
-./bin/cutline run --campaign test/fixtures/checkout/campaign-faulty.yaml
-./bin/cutline run --campaign test/fixtures/checkout/campaign-clean.yaml
+## Temporal
+
+`cutline temporal inspect` reads a completed execution from a local Temporal server and converts its history to Cutline events:
+
+```sh
+cutline temporal inspect --workflow-id example --namespace default
 ```
 
-The faulty campaign exits `2` with a violation; the clean campaign exits `0`.
-
-To inspect a workflow that ran on a local Temporal development server:
-
-```text
-./bin/cutline temporal inspect --workflow-id your-workflow-id --namespace default
-```
-
-`temporal inspect` is read-only and intentionally accepts only loopback
-Temporal endpoints. It is evidence ingestion, not yet the campaign scheduler
-for arbitrary Temporal workers; checkpoints and business-effect markers remain
-an explicit next adapter increment.
+The command accepts loopback endpoints only. It is evidence ingestion, not yet a checkpoint-driven campaign runner for arbitrary Temporal workers. Temporal history also cannot by itself prove whether an external dependency committed an effect; workers must provide that evidence.
 
 ## Development
 
-Run the fast local gate with `make check`. PostgreSQL integration tests use a
-pinned Testcontainers image:
-
-```text
-make integration
-make temporal-integration
+```sh
+make check                 # format, vet, unit tests, race detector
+make integration           # PostgreSQL integration tests (Docker required)
+make temporal-integration  # local Temporal integration test (Docker required)
+make release               # check, line budget, reference benchmark, build
 ```
 
-For manual database work, `docker compose up -d postgres` exposes the local-only
-database on `127.0.0.1:54329`. The CI integration job starts its own isolated
-container and applies every embedded migration twice to verify idempotency.
-`make temporal-integration` starts pinned PostgreSQL and Temporal containers,
-runs a worker whose workflow is canceled through the SDK, then verifies that
-Cutline fetches the live history over gRPC before tearing those containers down.
+For a local PostgreSQL instance, run `docker compose up -d postgres`. The database listens on `127.0.0.1:54329`.
 
-## Core result
+## Project status
 
-A failing run produces a **failure capsule** containing:
-
-- the exact tool and target versions;
-- campaign and deterministic seed;
-- injected cancellation point and release schedule;
-- ordered checkpoint, cancellation, task, and effect events;
-- causal graph and side-effect ledger;
-- violated invariant and stable failure signature;
-- minimized schedule;
-- one-command replay instructions.
-
-Cutline finds counterexamples within a bounded, instrumented search space. It
-does not claim to prove arbitrary concurrent programs correct.
-
-## Planned stack
-
-| Area | Choice |
-|---|---|
-| Language | Go |
-| Workflow adapter | Temporal Go SDK and local Temporal server |
-| Evidence ledger | PostgreSQL |
-| Contract language | Common Expression Language (CEL) |
-| CLI | Cobra |
-| Integration tests | Testcontainers for Go |
-| Local environment | Docker Compose |
-| Reports | Static HTML plus JSON/JSONL evidence |
+The native Go workflow is complete: discovery, bounded exploration, contract evaluation, minimization, replay, and reporting all run against the reference fixture. PostgreSQL-backed evidence and local Temporal history ingestion are also implemented. The next Temporal increment is worker instrumentation and checkpoint-driven campaign execution.
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Product definition](docs/product.md)
-- [System design](docs/system-design.md)
-- [Architecture and execution flows](docs/architecture.md)
-- [Domain model](docs/domain-model.md)
-- [Contracts and invariants](docs/contracts.md)
-- [Failure model](docs/failure-model.md)
-- [Failure capsule format](docs/failure-capsules.md)
-- [Testing strategy](docs/testing-strategy.md)
-- [Roadmap and line budget](docs/roadmap.md)
-- [Development workflow](docs/development-workflow.md)
-- [Coding standards](docs/coding-standards.md)
+- [Getting started and project map](docs/README.md)
+- [Contracts](docs/contracts.md)
+- [Architecture](docs/architecture.md)
+- [Failure capsules](docs/failure-capsules.md)
+- [Development guide](docs/development-workflow.md)
+- [Testing](docs/testing-strategy.md)
 - [Architecture decisions](docs/adr/README.md)
-- [AI coding instructions](AGENTS.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-
-## Scope guardrail
-
-The target repository size for the first credible release is approximately
-**14,400 meaningful lines**, including tests and excluding generated or vendored
-code. New subsystems must displace equivalent complexity or be justified by an
-accepted architecture decision.
 
 ## License
 
-No license has been selected yet. Until a license is added, the source is not
-granted for redistribution or reuse.
+No license has been selected. Until one is added, the repository does not grant permission to redistribute or reuse the source.

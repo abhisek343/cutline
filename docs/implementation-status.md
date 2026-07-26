@@ -1,77 +1,24 @@
 # Implementation status
 
-This file records the verified implementation checkpoint. A slice is marked
-complete only after its focused tests, the fast package gate, and a relevant
-manual probe pass. PostgreSQL container execution is delegated to the CI job
-because the local environment has no Docker provider.
+## Available today
 
-| Slice | Scope | Status |
-|---:|---|---|
-| 1 | Go foundation | Complete |
-| 2 | Canonical identities and events | Complete |
-| 3 | State machines | Complete |
-| 4 | Campaign and CLI foundation | Complete |
-| 5 | Public instrumentation SDK | Complete |
-| 6 | Local control protocol | Complete |
-| 7 | Native process adapter | Complete |
-| 8 | Single-cut scheduler | Complete |
-| 9 | Checkout benchmark fixture | Complete |
-| 10 | First complete demonstration | Complete |
-| 11 | PostgreSQL schema and migration guardrails | Complete; CI integration required |
-| 12 | Durable evidence ingestion and freeze | Complete; CI integration required |
-| 13 | Causal graph and effect reconciliation | Complete; CI integration required |
-| 14 | CEL contract engine | Complete |
-| 15 | Checkpoint discovery and single-cut enumeration | Complete |
-| 16 | Boundary-pair and bounded-prefix search | Complete |
-| 17 | Stable failure signatures | Complete |
-| 18 | Failure minimizer | Complete; `cutline minimize --campaign ... --output ...` writes a stable replay capsule |
-| 19 | Failure-capsule builder | Complete |
-| 20 | Replay engine | Complete |
-| 21 | Static report | Complete |
-| 22 | Temporal workflow adapter | Complete; local SDK/server history ingestion verified |
-| 23 | Temporal activity adapter | Complete; live activity lifecycle history translation verified |
-| 24 | Benchmark and release gate | Complete |
+The native Go adapter supports the complete local workflow:
 
-The current native manual probes must continue to show a faulty checkout as a
-contract violation and a clean checkout as a pass. In both cases the typed view
-must be complete and must expose cancellation ordering, drain evidence, and
-authoritative-effect reconciliation.
+- campaign loading and validation;
+- checkpoint discovery and bounded schedule exploration;
+- cancellation control through the local SDK protocol;
+- canonical event ingestion and optional PostgreSQL persistence;
+- typed CEL contracts and built-in integrity checks;
+- stable failure signatures, minimization, capsules, replay, and reports.
 
-Slice 18 also verifies that native candidate execution uses the same explicit
-release-prefix policy as exploration. The deterministic minimizer only accepts
-a candidate when it reproduces the exact stable failure-signature digest, then
-confirms the resulting schedule within a bounded attempt budget.
+The checkout fixture is the reference demonstration. The faulty version produces a contract violation; the corrected version passes. The release test repeats the faulty replay 20 times and requires at least 19 exact signatures.
 
-Slice 19 packages a stable violation into a versioned directory with canonical
-events, derived effects and graph data, the minimized schedule, checksums, a
-redacted target/dependency record, and escaped static report data. Import
-validation rejects traversal, symlinks, tampered artifacts, and incompatible
-schema versions.
+## Temporal
 
-Slice 20 validates capsules before reading any executable input, checks target
-compatibility, executes the minimized schedule through the native runner, and
-labels exact, comparative, different-signature, and non-reproduced outcomes.
+The Temporal adapter has been verified against a local server. It reads completed workflow and activity history through the Go SDK and translates it to canonical events. Unsupported history and external effect outcomes that cannot be verified are kept incomplete or unknown.
 
-Slice 21 renders validated capsule data as JSON or escaped standalone HTML.
-The report command never executes the target and refuses to overwrite an
-existing output file.
+It does not yet control checkpoints in arbitrary Temporal workers. That needs a worker instrumentation protocol and a local campaign runner; see the [roadmap](roadmap.md).
 
-Slice 22 adds a local-only Temporal Go SDK client and `cutline temporal inspect`.
-It retrieves one completed workflow history over gRPC, preserves unsupported
-history as incomplete evidence, and translates standard workflow-task,
-cancellation, and terminal lifecycle facts through the canonical adapter.
-The CI fixture starts pinned PostgreSQL and Temporal containers, runs a real Go
-worker, cancels its workflow, and verifies the resulting live evidence.
+## Verification
 
-Slice 23 adds typed activity-effect history construction and correlation by
-activity/effect identity. Live history also captures Temporal activity lifecycle
-events. Unknown dependency outcomes are represented as canonical
-`effect.unknown` transitions and invalid outcome labels are rejected; a worker
-must still supply authoritative external-effect evidence rather than relying on
-Temporal history alone.
-
-Slice 24 runs the seeded faulty checkout 20 times, requires at least 19 exact
-failure-signature matches, verifies the corrected checkout passes without
-signatures, enforces the 14,400-line budget, and exposes the combined `make
-release` gate. Temporal/PostgreSQL external-container execution remains an
-explicit CI dependency.
+`make check` covers formatting, vet, unit tests, and the race detector. PostgreSQL and Temporal container tests run in CI and can be run locally with Docker. `make release` adds the line budget, reference benchmark, and production build.

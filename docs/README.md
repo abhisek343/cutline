@@ -1,39 +1,27 @@
-# Cutline Documentation
+# Documentation
 
-This directory is the source of truth for Cutline's product and engineering
-contracts.
+Most users only need the README and a campaign file. The documents below are for contributors and for people who need to understand how Cutline reaches a verdict.
 
-## Start here
+## Using Cutline
 
-1. [Product definition](product.md)
-2. [System design](system-design.md)
-3. [Architecture and execution flows](architecture.md)
-4. [Domain model](domain-model.md)
-5. [Contracts and invariants](contracts.md)
-6. [Failure model](failure-model.md)
-7. [Failure capsules](failure-capsules.md)
-8. [Testing strategy](testing-strategy.md)
-9. [Roadmap and line budget](roadmap.md)
-10. [Implementation status](implementation-status.md)
+- [Contracts](contracts.md): writing CEL assertions and understanding pass, violation, and inconclusive results.
+- [Failure capsules](failure-capsules.md): what Cutline writes for a failure and how replay works.
+- [Failure model](failure-model.md): the classes of cancellation bugs the tool is designed to find.
 
-## Contributor guidance
+## Building Cutline
 
-- [Development workflow](development-workflow.md)
-- [Coding standards](coding-standards.md)
-- [Architecture decision records](adr/README.md)
-- [Repository-level AI instructions](../AGENTS.md)
-- [Contributing](../CONTRIBUTING.md)
-- [Security policy](../SECURITY.md)
+- [Architecture](architecture.md): package layout and runtime boundaries.
+- [System design](system-design.md): evidence flow, scheduling, and persistence.
+- [Domain model](domain-model.md): the records carried through that flow.
+- [Testing](testing-strategy.md): local and CI test layers.
+- [Development workflow](development-workflow.md): day-to-day contributor workflow and checks.
+- [Coding standards](coding-standards.md): conventions used in the codebase.
 
-## Authority order
+## Project planning
 
-When documents conflict, use this order:
+- [Implementation status](implementation-status.md)
+- [Roadmap](roadmap.md)
+- [Product notes](product.md)
+- [Architecture decisions](adr/README.md)
 
-1. accepted ADRs;
-2. `contracts.md`;
-3. `system-design.md`;
-4. `product.md`;
-5. roadmap and contributor guidance.
-
-Resolve conflicts by updating the documents in the same change. Do not silently
-choose whichever statement is easiest to implement.
+The README is authoritative for supported commands and current scope. The code and tests are authoritative when documentation and implementation differ.

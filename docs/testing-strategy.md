@@ -1,221 +1,38 @@
-# Testing Strategy
+# Testing
 
-## Objectives
+Cutline needs tests at several levels because a passing unit test does not show that a cancellation schedule is observable, stable, or replayable.
 
-Tests must establish that Cutline:
+## Local checks
 
-- controls declared checkpoints predictably;
-- distinguishes cancellation lifecycle boundaries;
-- never turns missing evidence into a pass;
-- detects seeded business-effect violations;
-- preserves failure identity during minimization;
-- replays capsules stably;
-- keeps native Go and Temporal semantics aligned.
-
-## Test layers
-
-### Unit tests
-
-Cover pure packages and state machines:
-
-- campaign parsing, normalization, and validation;
-- event envelope validation;
-- task, cancellation, effect, and resource transitions;
-- canonical sequence and causal-edge construction;
-- schedule generation and bounds;
-- CEL environment and helper functions;
-- failure signature normalization;
-- minimization candidate generation;
-- capsule manifest and checksum validation;
-- redaction and report escaping.
-
-Use table-driven tests with explicit invalid cases.
-
-### Property and model tests
-
-Use generated event sequences to verify:
-
-- invalid state transitions are rejected;
-- frozen evidence is immutable;
-- schedule actions reference reachable scheduler states;
-- minimization never accepts a different failure signature;
-- serialization round trips preserve semantics;
-- reordering independent events does not change invariant results;
-- duplicate delivery is idempotent where declared;
-- incomplete evidence never evaluates to pass.
-
-State-machine reference models should remain smaller than the implementation.
-
-### Race and concurrency tests
-
-Run `go test -race ./...` in CI. Target:
-
-- scheduler ownership;
-- SDK connection and acknowledgement handling;
-- simultaneous point arrivals;
-- cancellation/release races;
-- target shutdown while evidence is in flight;
-- concurrent effect transitions;
-- cleanup idempotency.
-
-A race-detector pass complements but does not replace Cutline's semantic tests.
-
-### Integration tests
-
-Use Testcontainers for:
-
-- PostgreSQL migrations, constraints, transaction failure, and reconnection;
-- fixture dependencies with authoritative effect ledgers;
-- coordinator/SDK Unix-socket protocol;
-- capsule creation and exact replay;
-- static report generation.
-
-Pin image versions. Tests must time out and clean up by run ID.
-
-Use the pinned Docker Compose fixture for the live Temporal server and worker
-path. It runs a local PostgreSQL-backed Temporal Service, starts a real Go
-worker, cancels a workflow through the SDK, and fetches the completed history
-through Cutline's loopback-only SDK client. The fixture runs as
-`make temporal-integration` and cleans up its named containers and volumes.
-
-### End-to-end benchmark fixtures
-
-Each fixture has faulty and corrected variants:
-
-1. **Checkout charge** — payment commits after cancellation observation.
-2. **Duplicate notification** — timeout/cancel ambiguity causes two sends.
-3. **Orphan worker** — child goroutine writes after parent return.
-4. **Leaked reservation** — inventory reservation is not released.
-5. **Temporal activity** — activity effect commits around cancellation heartbeat.
-
-The bug must be understandable, intentional, and independently asserted by the
-fixture dependency.
-
-## Fixture contract
-
-Every fixture provides:
-
-- deterministic reset;
-- a unique test namespace;
-- authoritative effect query;
-- known cancellation points;
-- expected faulty failure signature;
-- corrected expected pass;
-- no production credentials or endpoints;
-- bounded runtime.
-
-## Required scenario matrix
-
-| Scenario | Native Go | Temporal |
-|---|---:|---:|
-| Cancel before first effect | Yes | Yes |
-| Cancel at checkpoint | Yes | Yes |
-| Cancel between attempt and commit | Yes | Yes |
-| Commit before observation | Yes | Yes |
-| Commit after observation | Yes | Yes |
-| Lost acknowledgement and retry | Yes | Yes |
-| Repeated cancellation | Yes | Yes |
-| Child outlives parent | Yes | Yes |
-| Drain timeout | Yes | Yes |
-| Control disconnect | Yes | Yes |
-| Evidence sequence gap | Yes | Yes |
-| Exact capsule replay | Yes | Yes |
-
-## Oracle tests
-
-For each contract:
-
-- smallest passing evidence;
-- smallest violating evidence;
-- missing required capability;
-- unknown effect outcome;
-- duplicated and contradictory event;
-- boundary equality;
-- unrelated concurrent effect;
-- compensated effect;
-- schema-version mismatch;
-- evaluation cost limit.
-
-Golden files may validate exported JSON schemas, but behavioral assertions should
-not rely only on large snapshots.
-
-## Minimizer tests
-
-Seed schedules with known irrelevant actions. Verify:
-
-- the result preserves the same failure signature;
-- essential cancellation and offending effect remain;
-- schedule order remains valid;
-- accepted reductions are reproducible;
-- flaky candidates are rejected;
-- budget exhaustion returns the best stable candidate;
-- reduction history is auditable.
-
-## Replay stability
-
-Reference release gate:
-
-- 20 exact replay attempts;
-- at least 19 reproduce the same signature;
-- no attempt produces contradictory evidence;
-- environment and target digests match;
-- run duration variance is reported but not used as identity.
-
-## Negative tests
-
-Cutline must reject:
-
-- production-looking endpoints without override;
-- malformed campaign or unsupported major version;
-- duplicate checkpoint declarations with conflicting metadata;
-- invalid CEL or excessive evaluation cost;
-- path-traversal capsule;
-- checksum mismatch;
-- unescaped report payload;
-- event or capsule size limit breach;
-- shell-injection-style command arguments.
-
-## Performance tests
-
-Track, but do not prematurely optimize:
-
-- SDK checkpoint round-trip latency;
-- event ingest throughput;
-- PostgreSQL batch latency;
-- memory at 100,000 events;
-- CEL evaluation duration;
-- report generation duration;
-- minimization attempts per minute.
-
-Performance regression thresholds should be based on benchmark history after the
-first vertical slice.
-
-## CI gates
-
-Planned pull-request gates:
-
-```text
-format
-vet
-unit
-race
-integration-native
-schema-compatibility
-security/static-analysis
+```sh
+make check
+make release
 ```
 
-Temporal integration and full benchmark replay may run on `main` or nightly until
-CI duration is measured.
+`make check` runs formatting, vet, unit tests, and the race detector. `make release` also checks the line budget, runs the reference replay benchmark, and builds the CLI.
 
-## Test reporting
+## Integration checks
 
-Every implementation checkpoint records:
+```sh
+make integration
+make temporal-integration
+```
 
-- commands run;
-- packages and fixtures covered;
-- seeds and schedules used;
-- skipped tests and reason;
-- capsule replay count;
-- failures or flakiness;
-- race result;
-- line-budget delta.
+The PostgreSQL tests verify migrations, constraints, durable freezing, and idempotent migration application. The Temporal test starts local PostgreSQL and Temporal containers, runs and cancels a real workflow, and confirms that the adapter can fetch its history through the SDK.
+
+## Fixtures
+
+Every adapter change should have a faulty and corrected fixture where practical. A useful fixture has:
+
+- a named checkpoint and a declared exploration bound;
+- an authoritative effect outcome;
+- one contract that fails for the faulty version and passes for the corrected one;
+- a stable replay expectation when it produces a capsule.
+
+The checkout fixture is the reference native example. The release test runs it repeatedly and expects at least 19 exact signatures from 20 faulty replays, while the corrected fixture must pass.
+
+## What to cover
+
+For changes involving cancellation or evidence, test the relevant timing boundary: before a checkpoint, while blocked, between effect attempt and commit, and after commit before acknowledgement. Also cover repeated cancellation, duplicate effects, target crashes during drain, missing or out-of-order observations, and minimization that changes a failure.
+
+A missing observation must become inconclusive. It must never turn a failed safety assertion into a pass.

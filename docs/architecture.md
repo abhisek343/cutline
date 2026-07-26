@@ -1,155 +1,56 @@
-# Architecture and Execution Flows
+# Architecture
 
-## Package shape
+Cutline is a modular Go application with one CLI and a small SDK that targets embed in Go tests. The model package is deliberately independent of adapters, storage, and the Temporal SDK.
 
-Cutline starts as a modular monolith with one CLI binary and one embeddable Go
-SDK.
+## Packages
 
 ```text
-cmd/cutline/                 CLI entry point
-pkg/cutline/                 public instrumentation SDK
-internal/campaign/           manifest parsing and validation
-internal/model/              canonical entities, events, and state machines
-internal/control/            local SDK control protocol
-internal/explorer/           schedule generation and search bounds
-internal/scheduler/          point release and cancellation decisions
-internal/ingest/             envelope validation and canonical sequencing
-internal/ledger/             PostgreSQL repositories and migrations
-internal/contracts/          CEL environment, helpers, and evaluation
-internal/signature/          stable failure identity
-internal/minimize/           candidate reduction and confirmation
-internal/capsule/            packaging, validation, and replay metadata
-internal/report/             static HTML and JSON renderers
-internal/adapters/native/    native Go process adapter
-internal/adapters/temporal/  Temporal workflow/activity adapter
-internal/runtime/            process, container, and cleanup orchestration
-test/fixtures/               intentionally faulty and corrected targets
+cmd/cutline/              CLI entry point
+pkg/cutline/              public checkpoint and effect API
+internal/campaign/        campaign loading and validation
+internal/model/           canonical IDs, events, and state
+internal/control/         local SDK control protocol
+internal/scheduler/       checkpoint release decisions
+internal/explorer/        bounded schedule generation
+internal/ingest/          ordered event ingestion and freezing
+internal/evidence/        effects, tasks, and causal views
+internal/contracts/       CEL and built-in checks
+internal/minimize/        failure-preserving reduction
+internal/capsule/         capsule creation and validation
+internal/replay/          capsule replay
+internal/report/          HTML and JSON rendering
+internal/ledger/          PostgreSQL persistence
+internal/adapters/native/ Go test target adapter
+internal/adapters/temporal/ local Temporal history adapter
 ```
 
-Package APIs point inward toward `internal/model`. Runtime SDKs and
-infrastructure do not leak into the canonical model.
+Dependencies point toward `internal/model`. Runtime adapters translate their own events into model events; the model never imports an adapter or database package.
 
-## Native Go run
+## Native execution
 
-```mermaid
-sequenceDiagram
-    participant C as Cutline
-    participant T as Go target
-    participant D as Test dependency
-    participant L as Evidence ledger
+1. The CLI loads a campaign and starts the configured Go test target.
+2. The target registers with Cutline over a local control connection.
+3. When it reaches `cutline.Point`, the scheduler either releases it or requests cancellation.
+4. The target reports checkpoints, tasks, cancellation boundaries, and effects.
+5. After the target drains, Cutline freezes evidence and evaluates the configured contracts.
+6. A stable violation may be minimized, packaged, replayed, and reported.
 
-    C->>T: Start with run socket
-    T->>C: Register points and capabilities
-    T->>C: PointReached before-charge
-    C->>T: Inject context cancellation
-    T->>C: CancelObserved
-    T->>C: EffectIntent payment.charge
-    T->>D: Charge request
-    D-->>T: Committed
-    T->>C: EffectCommitted
-    T-->>C: Target returned cancelled
-    C->>L: Freeze ordered evidence
-    C->>C: Evaluate and minimize
-```
+The scheduler controls only declared checkpoint releases. It does not control the Go runtime scheduler.
 
-The example is a violation only when the configured rule and evidence semantics
-say the committed charge crossed the prohibited boundary.
+## Temporal
 
-Before execution, the native adapter runs a cancellation-free discovery pass.
-The discovery policy releases every reached point, derives the checkpoint set
-from canonical `checkpoint.reached` events, and records any visit bound or
-unreachable requested point. The coordinator then creates one stable single-cut
-schedule per eligible checkpoint in first-seen order; contracts run only on
-those cancellation schedules, never on discovery evidence.
+The Temporal adapter reads completed history from a local, loopback Temporal server and translates workflow and activity lifecycle events into the same model. It keeps unsupported history and unknown external effect outcomes explicit rather than guessing a result.
 
-Boundary-pair plans create adjacent before/after schedules, while bounded-prefix
-plans disclose the release prefix and its configured depth in each schedule.
+Temporal history ingestion is read-only. Worker instrumentation and campaign-driven checkpoint control are not implemented yet.
 
-## Temporal run
+## Ownership and ordering
 
-```mermaid
-sequenceDiagram
-    participant C as Cutline
-    participant S as Temporal server
-    participant W as Worker
-    participant A as Activity dependency
+The scheduler owns schedule state. One ingest loop assigns canonical event order. Contract evaluation begins only after evidence is frozen. Capsule and report code read immutable evidence.
 
-    C->>S: Start workflow with run metadata
-    W->>C: Workflow point reached
-    C->>S: Request workflow cancellation
-    S-->>W: Cancellation task
-    W->>C: Cancellation observed
-    W->>A: Activity effect attempt
-    A-->>W: Effect committed
-    W->>C: Canonical effect event
-    C->>S: Query terminal history
-    C->>C: Reconcile and evaluate evidence
-```
+If the adapter loses evidence, a drain times out, or an effect result is unknown, the affected contract is inconclusive rather than passing.
 
-Temporal history and SDK evidence are reconciled by stable workflow, run,
-activity, and effect identities. Temporal determinism does not make external
-activity effects exactly once.
+## Further reading
 
-## Explore-evaluate-minimize loop
-
-```mermaid
-stateDiagram-v2
-    [*] --> Planned
-    Planned --> Running
-    Running --> Draining
-    Draining --> Frozen
-    Frozen --> Passed
-    Frozen --> Inconclusive
-    Frozen --> Violated
-    Violated --> Minimizing
-    Minimizing --> Packaged
-    Passed --> [*]
-    Inconclusive --> [*]
-    Packaged --> [*]
-```
-
-## Dependency rules
-
-- `pkg/cutline` must remain small and infrastructure-free.
-- `internal/model` may use only the standard library.
-- adapters translate into the model; the model never imports adapters.
-- contract evaluation consumes frozen model views, not database rows directly.
-- reports consume exported evidence models, not live target state.
-- minimization invokes the same run pipeline as initial exploration.
-- no package may reinterpret event ordering independently.
-
-## Process boundaries
-
-| Boundary | Protocol | Failure treatment |
-|---|---|---|
-| CLI to target SDK | Versioned JSON over private Unix socket or authenticated loopback TCP | Disconnect makes evidence incomplete |
-| Coordinator to PostgreSQL | SQL transaction | Stop schedule progression on durable-write failure |
-| Coordinator to Temporal | Temporal Go SDK | Adapter classifies expected versus infrastructure failure |
-| Target to fixtures | Target-specific test protocol | Effect evidence must identify authoritative source |
-| Reporter to browser | Static escaped HTML/JSON | No live server or imported active content |
-
-The JSON control protocol is an initial simplicity choice. If profiling shows
-serialization overhead or compatibility pressure, changing it requires an ADR.
-
-## Configuration boundaries
-
-Campaign manifests express test intent. Environment-specific connection details
-belong in a separate local profile or injected environment, not in committed
-campaigns. A capsule resolves and records safe, redacted values needed for
-replay.
-
-## Concurrency ownership
-
-- the scheduler is the sole writer of schedule state;
-- one ingest loop assigns canonical event sequence;
-- per-session local sequences detect duplication and gaps;
-- contract evaluation starts only after evidence freeze;
-- capsule creation reads immutable snapshots;
-- cleanup is idempotent and keyed by run ID.
-
-## Evolution
-
-New runtimes implement the adapter capability interface. New report formats read
-the capsule schema. New exploration strategies operate on canonical scheduler
-state. None may fork the meaning of cancellation, effect commitment, or failure
-identity.
+- [System design](system-design.md) explains the data flow in more detail.
+- [Domain model](domain-model.md) lists the canonical records and states.
+- [ADR index](adr/README.md) records the decisions behind these boundaries.

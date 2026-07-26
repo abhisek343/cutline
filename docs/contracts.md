@@ -1,124 +1,17 @@
-# Contracts and Invariants
+# Contracts
 
-## Contract philosophy
+A contract is a CEL expression evaluated after Cutline freezes a run's evidence. It answers one business question, such as whether a payment was committed after cancellation was observed.
 
-Cutline reports only what its evidence supports. Missing observations, unsupported
-adapter capabilities, or ambiguous effect outcomes must not be converted into a
-pass.
+A result is one of:
 
-## Result statuses
+- **pass**: complete evidence satisfies the expression;
+- **violation**: complete evidence contains a counterexample;
+- **inconclusive**: required evidence is missing or ambiguous;
+- **invalid**: the campaign or expression cannot be evaluated.
 
-| Status | Meaning |
-|---|---|
-| `pass` | Complete required evidence satisfies the rule |
-| `violation` | Evidence contains a stable counterexample |
-| `inconclusive` | Evidence or capability is insufficient |
-| `invalid` | Contract or campaign is malformed or semantically unsupported |
+Cutline never treats missing evidence as a pass.
 
-## Built-in structural invariants
-
-These run before user CEL expressions:
-
-### Event integrity
-
-- run, attempt, and session identities match;
-- canonical event sequence is contiguous after freeze;
-- target-local sequence has no unexplained gap or conflict;
-- referenced entities exist;
-- schema versions are supported;
-- events cannot arrive after evidence freeze.
-
-### Task integrity
-
-- a task has at most one parent;
-- parent task exists before child start is accepted;
-- terminal transition occurs at most once;
-- a completed task cannot later observe cancellation;
-- registered tasks have a known terminal or explicit lost state by drain end.
-
-### Cancellation integrity
-
-- delivery cannot precede request in adapter-authoritative order;
-- observation cites a delivered or inherited cancellation episode;
-- propagation edges cannot form a cycle;
-- repeated requests do not overwrite the first observation boundary.
-
-### Effect integrity
-
-- effect identity is unique within a run;
-- attempted follows declared intent;
-- committed and failed are mutually exclusive for one attempt;
-- compensation cites a committed effect;
-- an unknown outcome cannot be treated as failed;
-- effect evidence source and confidence are recorded.
-
-### Schedule integrity
-
-- each release references a currently blocked point visit;
-- action ordinals are contiguous;
-- candidate precondition digest matches the observed scheduler state;
-- injected cancellation matches the planned trigger.
-
-## Cancellation boundaries
-
-Contracts must name the boundary they use:
-
-- `cancel.requestedAt`;
-- `cancel.deliveredAt`;
-- `cancel.observedAt`;
-- `target.returnedAt`;
-- `run.drainedAt`.
-
-"After cancellation" without a boundary is invalid.
-
-## Default invariant vocabulary
-
-### No forbidden effect after observation
-
-```cel
-!effects.exists(e,
-  e.kind == "payment.charge" &&
-  e.committed &&
-  e.startedAfter(cancel.observedAt))
-```
-
-### No child outlives drain
-
-```cel
-!tasks.exists(t,
-  t.descendsFrom(cancel.targetTask) &&
-  !t.isTerminalAt(run.drainedAt))
-```
-
-### Committed effect is compensated
-
-```cel
-effects
-  .filter(e, e.kind == "inventory.reserve" && e.committed)
-  .all(e, e.wasCompensatedBefore(run.drainedAt))
-```
-
-### At most one committed effect per idempotency key
-
-```cel
-effects
-  .filter(e, e.kind == "email.send" && e.committed)
-  .groupByIdempotencyKey()
-  .all(group, group.size() <= 1)
-```
-
-### Acquired resources are released
-
-```cel
-resources
-  .filter(r, r.owner.descendsFrom(cancel.targetTask))
-  .all(r, r.isReleasedAt(run.drainedAt) || r.expiredSafely())
-```
-
-The version 1 environment supports the helper forms shown above. The evaluator
-rejects unsupported environment versions and runs only against frozen evidence.
-
-## Contract declaration
+## Campaign contract
 
 ```yaml
 contracts:
@@ -137,77 +30,49 @@ contracts:
         e.startedAfter(cancel.observedAt))
 ```
 
-Required fields:
+`name`, `severity`, and `expression` are required. Use `requires` when an assertion only makes sense with a particular adapter capability. Use `boundary` for a time-relative assertion; “after cancellation” is not specific enough on its own.
 
-- stable name and version;
-- severity;
-- capability requirements;
-- explicit boundary when time-relative;
-- CEL expression;
-- optional human remediation.
+## Available evidence
 
-## Evidence completeness
+The CEL environment reads a typed, frozen view:
 
-A contract declares required capabilities. Evaluation is inconclusive when:
+- `cancel`: cancellation request, delivery, and observation times;
+- `run`: terminal and drain state;
+- `effects`: declared, attempted, committed, failed, compensated, or unknown effects;
+- `tasks`: recorded target and activity work;
+- `resources`: acquired and released resources.
 
-- adapter lacks a required transition;
-- control channel disconnected;
-- sequence gap exists;
-- event limit was reached;
-- drain timed out while relevant work remained;
-- effect outcome is unknown;
-- authoritative dependency snapshot failed;
-- evidence schema cannot be interpreted.
+Use a committed effect only when its dependency outcome is authoritative. An unknown outcome stays unknown and can make a contract inconclusive.
 
-A contract may explicitly allow selected unknowns, but the allowance is visible
-in its definition and report.
+## Examples
 
-## Effect timing
+No forbidden effect after observation:
 
-An effect exposes multiple boundaries:
+```cel
+!effects.exists(e,
+  e.kind == "payment.charge" &&
+  e.committed &&
+  e.startedAfter(cancel.observedAt))
+```
 
-- intent declared;
-- attempt started;
-- request accepted by dependency;
-- effect committed;
-- acknowledgement received;
-- compensation committed.
+Every committed reservation is compensated before the run drains:
 
-The phrase "effect happened after cancellation" must specify which effect
-boundary is compared with which cancellation boundary.
+```cel
+effects
+  .filter(e, e.kind == "inventory.reserve" && e.committed)
+  .all(e, e.wasCompensatedBefore(run.drainedAt))
+```
 
-## Failure signature contract
+No child task remains active at drain:
 
-Minimization and replay preserve:
+```cel
+!tasks.exists(t,
+  t.descendsFrom(cancel.targetTask) &&
+  !t.isTerminalAt(run.drainedAt))
+```
 
-- contract name and major version;
-- violation class;
-- primary offending entity class;
-- cancellation trigger class;
-- normalized causal path;
-- relevant adapter major version.
+## Evidence rules
 
-They need not preserve wall timestamps, event ordinals, run IDs, or incidental
-log text.
+Before CEL runs, Cutline checks canonical event order, task lifecycle, cancellation ordering, effect transitions, and schedule integrity. Evaluation is inconclusive when the control channel disconnects, event sequence has a gap, drain times out, a required capability is absent, or a dependency result is unknown.
 
-## Determinism contract
-
-A capsule is stable when the configured confirmation attempts reproduce the same
-failure signature. Default release target: 19 of 20 attempts on the pinned
-reference environment.
-
-Failure to meet the target produces `flaky`, not `reproduced`.
-
-## Safety contracts
-
-- campaigns cannot silently target non-local dependencies;
-- environment variables and payloads are not captured by default;
-- report content is escaped;
-- imported capsules are integrity-checked before use;
-- target command arguments are executed without shell interpolation.
-
-## Compatibility
-
-Contract semantics are versioned independently from syntax. A newer Cutline
-binary must reject or explicitly migrate unsupported major versions. It must not
-reinterpret old evidence silently.
+Contract and evidence schemas are versioned. A newer binary must reject an unsupported major version rather than reinterpret prior evidence.
