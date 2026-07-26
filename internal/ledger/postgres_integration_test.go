@@ -46,8 +46,8 @@ func TestPostgresSchemaConstraintsAndFreeze(t *testing.T) {
 	}
 
 	const (
-		digest   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		target   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		digest   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		target   = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		run      = "run_11111111111111111111111111111111"
 		attempt  = "attempt_22222222222222222222222222222222"
 		session  = "session_33333333333333333333333333333333"

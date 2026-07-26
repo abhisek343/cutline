@@ -15,8 +15,8 @@ type eventHandler struct {
 	runID              model.RunID
 	attemptID          model.AttemptID
 	coordinatorSession model.SessionID
-	store              *ingest.Memory
-	scheduler          *scheduler.SingleCut
+	store              ingest.Store
+	scheduler          scheduler.Policy
 
 	mu             sync.Mutex
 	coordinatorSeq uint64
@@ -26,8 +26,8 @@ type eventHandler struct {
 func newEventHandler(
 	runID model.RunID,
 	attemptID model.AttemptID,
-	store *ingest.Memory,
-	schedule *scheduler.SingleCut,
+	store ingest.Store,
+	schedule scheduler.Policy,
 ) (*eventHandler, error) {
 	sessionValue, err := model.ContentID("session", "coordinator", string(runID), string(attemptID))
 	if err != nil {

@@ -33,6 +33,9 @@ func applyDefaults(c *Campaign) {
 	if c.Exploration.MaxPointVisits == 0 {
 		c.Exploration.MaxPointVisits = 1_000
 	}
+	if c.Exploration.Strategy == "bounded-prefix" && c.Exploration.PrefixDepth == 0 {
+		c.Exploration.PrefixDepth = 3
+	}
 	if c.Exploration.ScheduleTimeout == 0 {
 		c.Exploration.ScheduleTimeout = Duration(60 * time.Second)
 	}
@@ -85,6 +88,9 @@ func (c Campaign) Validate() error {
 	}
 	if c.Exploration.MaxPointVisits < 1 || c.Exploration.MaxPointVisits > 1_000_000 {
 		return fieldError(ErrInvalidCampaign, "exploration.maxPointVisits", "must be between 1 and 1000000")
+	}
+	if c.Exploration.PrefixDepth < 0 || c.Exploration.PrefixDepth > 10_000 {
+		return fieldError(ErrInvalidCampaign, "exploration.prefixDepth", "must be between 0 and 10000")
 	}
 	if c.Exploration.ScheduleTimeout.Value() <= 0 {
 		return fieldError(ErrInvalidCampaign, "exploration.scheduleTimeout", "must be positive")

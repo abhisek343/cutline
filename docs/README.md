@@ -14,6 +14,7 @@ contracts.
 7. [Failure capsules](failure-capsules.md)
 8. [Testing strategy](testing-strategy.md)
 9. [Roadmap and line budget](roadmap.md)
+10. [Implementation status](implementation-status.md)
 
 ## Contributor guidance
 

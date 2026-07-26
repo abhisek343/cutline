@@ -51,6 +51,22 @@ func (c Campaign) Digest() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal normalized campaign: %w", err)
 	}
+	return digestJSON(data)
+}
+
+// TargetDigest identifies the adapter and command independently from the
+// campaign contracts. It is stored with every attempt so a replay can reject
+// evidence produced by a different target build.
+func (c Campaign) TargetDigest() (string, error) {
+	target := c.Target
+	data, err := json.Marshal(target)
+	if err != nil {
+		return "", fmt.Errorf("marshal target: %w", err)
+	}
+	return digestJSON(data)
+}
+
+func digestJSON(data []byte) (string, error) {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }

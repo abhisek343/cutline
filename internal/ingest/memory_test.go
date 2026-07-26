@@ -35,9 +35,16 @@ func TestMemoryAssignsOrderAndFreezes(t *testing.T) {
 		t.Fatalf("CanonicalOrder = %d", accepted.CanonicalOrder)
 	}
 
-	snapshot := store.Freeze()
+	snapshot, err := store.Freeze()
+	if err != nil {
+		t.Fatalf("Freeze() error = %v", err)
+	}
 	snapshot.Events[0].Attributes["status"] = "mutated"
-	if got := store.Current()[0].Attributes["status"]; got != "running" {
+	current, err := store.Current()
+	if err != nil {
+		t.Fatalf("Current() error = %v", err)
+	}
+	if got := current[0].Attributes["status"]; got != "running" {
 		t.Fatalf("stored event mutated through snapshot: %q", got)
 	}
 	if _, err := store.Append(event); !errors.Is(err, ErrFrozen) {
@@ -66,7 +73,11 @@ func TestMemoryRejectsGapAndCannotPassAsComplete(t *testing.T) {
 	if _, err := store.Append(event); !errors.Is(err, ErrSequenceGap) {
 		t.Fatalf("Append(gap) error = %v", err)
 	}
-	if store.Freeze().Complete() {
+	snapshot, err := store.Freeze()
+	if err != nil {
+		t.Fatalf("Freeze() error = %v", err)
+	}
+	if snapshot.Complete() {
 		t.Fatal("snapshot with a sequence gap reported complete")
 	}
 }

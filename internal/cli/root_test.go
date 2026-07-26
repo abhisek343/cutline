@@ -96,13 +96,30 @@ func TestRunRejectsUnknownField(t *testing.T) {
 	}
 }
 
-func TestPlaceholderCommandsAreExplicit(t *testing.T) {
+func TestMinimizeRequiresInputs(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"minimize", "replay", "report"} {
-		_, _, err := execute(t, name)
-		if !errors.Is(err, ErrNotImplemented) {
-			t.Errorf("%s error = %v, want ErrNotImplemented", name, err)
-		}
+	_, _, err := execute(t, "minimize")
+	if err == nil {
+		t.Fatal("minimize unexpectedly accepted missing required flags")
+	}
+}
+
+func TestLocalNewDirectoryRejectsUnsafeAndExistingTargets(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	if _, err := localNewDirectory(base, "../outside"); err == nil {
+		t.Fatal("localNewDirectory accepted an escaping output path")
+	}
+	if _, err := localNewDirectory(base, "."); err == nil {
+		t.Fatal("localNewDirectory accepted repository root")
+	}
+	path := filepath.Join(base, "capsule")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localNewDirectory(base, "capsule"); err == nil {
+		t.Fatal("localNewDirectory accepted an existing output path")
 	}
 }

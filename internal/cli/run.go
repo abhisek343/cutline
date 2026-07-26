@@ -36,7 +36,11 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve current working directory: %w", err)
 			}
-			result, err := (native.Runner{BaseDirectory: baseDirectory}).Run(cmd.Context(), spec)
+			runner, err := runnerForCampaign(spec, baseDirectory)
+			if err != nil {
+				return err
+			}
+			result, err := runner.RunCampaign(cmd.Context(), spec)
 			if err != nil {
 				return err
 			}
@@ -47,28 +51,32 @@ func newRunCommand() *cobra.Command {
 			} else {
 				fmt.Fprintf(
 					cmd.OutOrStdout(),
-					"run %s: %s\n  attempt: %s\n  events: %d\n  effects: %d\n  duration: %s\n",
-					result.RunID,
+					"campaign %q: %s\n  discovery run: %s\n  discovered checkpoints: %d\n  schedules: %d\n",
+					spec.Name,
 					result.Status,
-					result.AttemptID,
-					len(result.Evidence.Events),
-					len(result.Effects),
-					result.Duration,
+					result.Discovery.Status,
+					len(result.Plan.Checkpoints),
+					len(result.Schedules),
 				)
-				for _, evaluation := range result.Evaluations {
-					fmt.Fprintf(
-						cmd.OutOrStdout(),
-						"  contract %s: %s — %s\n",
-						evaluation.Contract,
-						evaluation.Status,
-						evaluation.Message,
-					)
+				for index, schedule := range result.Schedules {
+					planned := result.Plan.Schedules[index]
+					description := planned.CancelAt
+					if planned.PairSide != "" {
+						description += " " + planned.PairSide + " " + planned.PairPoint
+					}
+					if len(planned.ReleasePrefix) > 0 {
+						description += " prefix=" + strings.Join(planned.ReleasePrefix, ",")
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "  schedule %d (%s): %s, events=%d, effects=%d\n", index+1, description, schedule.Status, len(schedule.Evidence.Events), len(schedule.Effects))
+					for _, evaluation := range schedule.Evaluations {
+						fmt.Fprintf(cmd.OutOrStdout(), "    contract %s: %s — %s\n", evaluation.Contract, evaluation.Status, evaluation.Message)
+					}
+					for _, value := range schedule.Signatures {
+						fmt.Fprintf(cmd.OutOrStdout(), "    failure signature: %s (%s)\n", value.Digest, value.ViolationClass)
+					}
 				}
-				if result.Stdout != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  target stdout:\n%s", indent(result.Stdout))
-				}
-				if result.Stderr != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  target stderr:\n%s", indent(result.Stderr))
+				if len(result.Plan.Unreachable) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "  unreachable checkpoints: %s\n", strings.Join(result.Plan.Unreachable, ", "))
 				}
 			}
 			switch result.Status {

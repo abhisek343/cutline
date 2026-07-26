@@ -32,7 +32,11 @@ contracts:
       - effects.authoritative_commit
       - drain.registered_tasks
     boundary: cancellation-observed
-    expression: 'builtin.no_effect_after_cancel_observed("payment.charge")'
+    expression: >
+      !effects.exists(e,
+        e.kind == "payment.charge" &&
+        e.committed &&
+        e.startedAfter(cancel.observedAt))
 
 output:
   directory: .cutline

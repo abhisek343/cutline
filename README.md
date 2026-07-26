@@ -17,9 +17,19 @@ small, deterministic counterexamples.
 ## Status
 
 Cutline is under active implementation. The deterministic model, campaign CLI,
-native Go SDK/control path, single-cut scheduler, and faulty/correct checkout
-benchmark are runnable. PostgreSQL persistence, CEL, exploration, capsules,
-reports, and Temporal support are being delivered in that order.
+native Go SDK/control path, PostgreSQL evidence ledger, typed causal view,
+checkpoint discovery, bounded single-cut enumeration, boundary-pair and
+bounded-prefix exploration, typed CEL contracts, and the faulty/correct checkout
+benchmark are runnable, with stable failure signatures attached to violations
+and a bounded deterministic minimizer that preserves those signatures. Stable
+violations can now be packaged as checksummed, redaction-aware failure capsules
+and replayed with exact-signature comparison. Those capsules also render as
+escaped static HTML or machine-readable JSON reports. The Temporal adapter
+boundary is isolated and translates workflow history into the same canonical
+events; pinned SDK/server integration is the remaining runtime-specific step.
+Activity effect outcomes use explicit identities and preserve unknown dependency
+results instead of guessing a commit. The reference release gate also checks 20
+faulty replays (at least 19 exact), a clean pass, and the 14,400-line budget.
 
 ## What a test looks like
 
@@ -79,7 +89,7 @@ The intended CLI flow is:
 ```text
 cutline doctor
 cutline run --campaign cutline.yaml
-cutline minimize <run-id>
+cutline minimize --campaign cutline.yaml --output capsules/checkout-cancel
 cutline replay capsules/<failure-id>
 cutline report <run-id> --format html
 ```

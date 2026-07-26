@@ -25,6 +25,7 @@ type ExplorationSpec struct {
 	Strategy        string   `yaml:"strategy" json:"strategy"`
 	MaxSchedules    int      `yaml:"maxSchedules" json:"maxSchedules"`
 	MaxPointVisits  int      `yaml:"maxPointVisits,omitempty" json:"maxPointVisits"`
+	PrefixDepth     int      `yaml:"prefixDepth,omitempty" json:"prefixDepth,omitempty"`
 	ScheduleTimeout Duration `yaml:"scheduleTimeout,omitempty" json:"scheduleTimeout"`
 	DrainTimeout    Duration `yaml:"drainTimeout,omitempty" json:"drainTimeout"`
 	CancelAt        []string `yaml:"cancelAt,omitempty" json:"cancelAt"`

@@ -2,14 +2,11 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/abhisek343/cutline/internal/buildinfo"
 	"github.com/spf13/cobra"
 )
-
-var ErrNotImplemented = errors.New("command not implemented in this milestone")
 
 var (
 	ErrViolation    = errors.New("cutline found a contract violation")
@@ -32,22 +29,11 @@ func New(stdout, stderr io.Writer) *cobra.Command {
 	root.AddCommand(
 		newDoctorCommand(info),
 		newRunCommand(),
-		placeholderCommand("minimize", "minimize a failing schedule"),
-		placeholderCommand("replay", "replay a failure capsule"),
-		placeholderCommand("report", "render a run report"),
+		newMinimizeCommand(),
+		newReplayCommand(),
+		newReportCommand(),
 	)
 	return root
-}
-
-func placeholderCommand(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s: %w", use, ErrNotImplemented)
-		},
-	}
 }
 
 // ExitCode maps a semantic CLI result to a stable process status.
