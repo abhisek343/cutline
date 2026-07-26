@@ -40,7 +40,7 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := runner.Run(cmd.Context(), spec)
+			result, err := runner.RunCampaign(cmd.Context(), spec)
 			if err != nil {
 				return err
 			}
@@ -51,28 +51,21 @@ func newRunCommand() *cobra.Command {
 			} else {
 				fmt.Fprintf(
 					cmd.OutOrStdout(),
-					"run %s: %s\n  attempt: %s\n  events: %d\n  effects: %d\n  duration: %s\n",
-					result.RunID,
+					"campaign %q: %s\n  discovery run: %s\n  discovered checkpoints: %d\n  schedules: %d\n",
+					spec.Name,
 					result.Status,
-					result.AttemptID,
-					len(result.Evidence.Events),
-					len(result.Effects),
-					result.Duration,
+					result.Discovery.Status,
+					len(result.Plan.Checkpoints),
+					len(result.Schedules),
 				)
-				for _, evaluation := range result.Evaluations {
-					fmt.Fprintf(
-						cmd.OutOrStdout(),
-						"  contract %s: %s — %s\n",
-						evaluation.Contract,
-						evaluation.Status,
-						evaluation.Message,
-					)
+				for index, schedule := range result.Schedules {
+					fmt.Fprintf(cmd.OutOrStdout(), "  schedule %d (%s): %s, events=%d, effects=%d\n", index+1, result.Plan.Schedules[index].CancelAt, schedule.Status, len(schedule.Evidence.Events), len(schedule.Effects))
+					for _, evaluation := range schedule.Evaluations {
+						fmt.Fprintf(cmd.OutOrStdout(), "    contract %s: %s — %s\n", evaluation.Contract, evaluation.Status, evaluation.Message)
+					}
 				}
-				if result.Stdout != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  target stdout:\n%s", indent(result.Stdout))
-				}
-				if result.Stderr != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  target stderr:\n%s", indent(result.Stderr))
+				if len(result.Plan.Unreachable) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "  unreachable checkpoints: %s\n", strings.Join(result.Plan.Unreachable, ", "))
 				}
 			}
 			switch result.Status {

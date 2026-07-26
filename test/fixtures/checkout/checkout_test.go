@@ -24,6 +24,12 @@ func TestCutlineTarget(t *testing.T) {
 	err := cutline.Run(context.Background(), "checkout", func(ctx context.Context) error {
 		return Execute(ctx, *fixtureMode, ledgerPath)
 	})
+	if os.Getenv("CUTLINE_DISCOVERY") == "1" {
+		if err != nil {
+			t.Fatalf("discovery execution error = %v", err)
+		}
+		return
+	}
 	if !IsExpectedCancellation(err) {
 		t.Fatalf("Execute() error = %v, want injected cancellation", err)
 	}

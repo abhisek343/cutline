@@ -19,6 +19,7 @@ import (
 	"github.com/abhisek343/cutline/internal/contracts"
 	"github.com/abhisek343/cutline/internal/control"
 	"github.com/abhisek343/cutline/internal/evidence"
+	"github.com/abhisek343/cutline/internal/explorer"
 	"github.com/abhisek343/cutline/internal/fixtureledger"
 	"github.com/abhisek343/cutline/internal/ingest"
 	"github.com/abhisek343/cutline/internal/ledger"
@@ -65,12 +66,78 @@ type Runner struct {
 	StoreFactory  func(context.Context, model.RunID, model.AttemptID, int) (ingest.Store, error)
 }
 
+type CampaignResult struct {
+	Status    OverallStatus `json:"status"`
+	Discovery Result        `json:"discovery"`
+	Plan      explorer.Plan `json:"plan"`
+	Schedules []Result      `json:"schedules"`
+}
+
 func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error) {
+	if len(spec.Exploration.CancelAt) == 0 {
+		return Result{}, fmt.Errorf("native run requires exploration.cancelAt")
+	}
+	policy, err := scheduler.NewSingleCut(spec.Exploration.CancelAt[0])
+	if err != nil {
+		return Result{}, err
+	}
+	return r.runWithPolicy(ctx, spec, policy, false)
+}
+
+// Discover performs a cancellation-free pass so schedule generation is based
+// on observed checkpoints rather than campaign text or target logs.
+func (r Runner) Discover(ctx context.Context, spec campaign.Campaign) (Result, explorer.Discovery, error) {
+	policy := scheduler.NewDiscovery(spec.Exploration.MaxPointVisits)
+	result, err := r.runWithPolicy(ctx, spec, policy, true)
+	if err != nil {
+		return Result{}, explorer.Discovery{}, err
+	}
+	discovery := explorer.Discover(result.Evidence.Events, result.Evidence.IncompleteReasons, spec.Exploration.MaxPointVisits)
+	if policy.Truncated() {
+		discovery.Truncated = true
+	}
+	for _, issue := range result.View.Issues {
+		reason := "discovery evidence issue: " + issue.Code + ": " + issue.Message
+		if !slices.Contains(discovery.IncompleteReasons, reason) {
+			discovery.IncompleteReasons = append(discovery.IncompleteReasons, reason)
+		}
+	}
+	return result, discovery, nil
+}
+
+// RunCampaign discovers the target once and then executes every bounded
+// single-cut schedule in discovery order.
+func (r Runner) RunCampaign(ctx context.Context, spec campaign.Campaign) (CampaignResult, error) {
+	discoveryResult, discovery, err := r.Discover(ctx, spec)
+	if err != nil {
+		return CampaignResult{}, err
+	}
+	plan, err := explorer.EnumerateSingleCut(discovery, spec.Exploration.CancelAt, spec.Exploration.MaxSchedules)
+	if err != nil {
+		return CampaignResult{}, err
+	}
+	result := CampaignResult{Discovery: discoveryResult, Plan: plan, Schedules: []Result{}}
+	for _, schedule := range plan.Schedules {
+		scheduleSpec := spec
+		scheduleSpec.Exploration.Strategy = "single-cut"
+		scheduleSpec.Exploration.CancelAt = []string{schedule.CancelAt}
+		scheduleSpec.Exploration.MaxSchedules = 1
+		scheduleResult, runErr := r.Run(ctx, scheduleSpec)
+		if runErr != nil {
+			return CampaignResult{}, fmt.Errorf("run schedule %s: %w", schedule.ID, runErr)
+		}
+		result.Schedules = append(result.Schedules, scheduleResult)
+	}
+	result.Status = overallCampaignStatus(plan, result.Schedules)
+	return result, nil
+}
+
+func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, policy scheduler.Policy, discovery bool) (Result, error) {
 	if spec.Target.Adapter != "go-test" && spec.Target.Adapter != "go-command" {
 		return Result{}, ErrUnsupportedAdapter
 	}
-	if len(spec.Exploration.CancelAt) == 0 {
-		return Result{}, fmt.Errorf("native run requires exploration.cancelAt")
+	if policy == nil {
+		return Result{}, fmt.Errorf("native run requires a scheduler policy")
 	}
 	runValue, err := model.NewID("run")
 	if err != nil {
@@ -113,11 +180,7 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 	if closer, ok := store.(interface{ Close() }); ok {
 		defer closer.Close()
 	}
-	singleCut, err := scheduler.NewSingleCut(spec.Exploration.CancelAt[0])
-	if err != nil {
-		return Result{}, err
-	}
-	handler, err := newEventHandler(runID, attemptID, store, singleCut)
+	handler, err := newEventHandler(runID, attemptID, store, policy)
 	if err != nil {
 		return Result{}, err
 	}
@@ -152,7 +215,7 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 		_ = server.Close()
 		return Result{}, err
 	}
-	command.Env = targetEnvironment(map[string]string{
+	targetExtra := map[string]string{
 		"CUTLINE_NETWORK":        controlNetwork,
 		"CUTLINE_ENDPOINT":       controlAddress,
 		"CUTLINE_TOKEN":          token,
@@ -160,7 +223,11 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 		"CUTLINE_ATTEMPT_ID":     string(attemptID),
 		"CUTLINE_SESSION_ID":     sessionValue,
 		"CUTLINE_FIXTURE_LEDGER": ledgerPath,
-	})
+	}
+	if discovery {
+		targetExtra["CUTLINE_DISCOVERY"] = "1"
+	}
+	command.Env = targetEnvironment(targetExtra)
 	stdout := &limitedBuffer{limit: maxProcessOutput}
 	stderr := &limitedBuffer{limit: maxProcessOutput}
 	command.Stdout = stdout
@@ -175,8 +242,11 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 	if runErr != nil {
 		store.MarkIncomplete("target process: " + runErr.Error())
 	}
-	if !singleCut.Injected() {
+	if !discovery && !policy.Injected() {
 		store.MarkIncomplete("planned cancellation point was not reached")
+	}
+	if bounded, ok := policy.(interface{ Truncated() bool }); ok && bounded.Truncated() {
+		store.MarkIncomplete("maximum checkpoint visits reached")
 	}
 
 	records, ledgerErr := fixtureledger.Read(ledgerPath, maxLedgerRecords)
@@ -191,7 +261,7 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 			authoritativeComplete = false
 		}
 	}
-	markMissingTerminalEvidence(store)
+	markMissingTerminalEvidence(store, !discovery)
 	snapshot, freezeErr := store.Freeze()
 	if freezeErr != nil {
 		return Result{}, fmt.Errorf("freeze evidence: %w", freezeErr)
@@ -202,7 +272,10 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 			view.Issues = append(view.Issues, evidence.Issue{Code: "graph_persist", Message: err.Error()})
 		}
 	}
-	evaluations := contracts.Evaluate(view, spec.Contracts)
+	evaluations := []contracts.Result{}
+	if !discovery {
+		evaluations = contracts.Evaluate(view, spec.Contracts)
+	}
 
 	result := Result{
 		RunID:       runID,
@@ -273,17 +346,19 @@ func targetEnvironment(extra map[string]string) []string {
 	return environment
 }
 
-func markMissingTerminalEvidence(store ingest.Store) {
+func markMissingTerminalEvidence(store ingest.Store, requireCancellation bool) {
 	events, err := store.Current()
 	if err != nil {
 		_ = store.MarkIncomplete("read current evidence: " + err.Error())
 		return
 	}
 	required := map[model.EventType]bool{
-		model.EventCancelObserved: false,
 		model.EventTargetReturned: false,
 		model.EventDrainCompleted: false,
 		model.EventSessionEnded:   false,
+	}
+	if requireCancellation {
+		required[model.EventCancelObserved] = false
 	}
 	for _, event := range events {
 		if _, ok := required[event.Type]; ok {
@@ -295,6 +370,32 @@ func markMissingTerminalEvidence(store ingest.Store) {
 			store.MarkIncomplete("missing required event: " + string(eventType))
 		}
 	}
+}
+
+func overallCampaignStatus(plan explorer.Plan, schedules []Result) OverallStatus {
+	inconclusive := len(schedules) == 0 || len(plan.DiscoveryIncomplete) > 0 || plan.DiscoveryTruncated || len(plan.Unreachable) > 0
+	invalid := false
+	violation := false
+	for _, schedule := range schedules {
+		switch schedule.Status {
+		case OverallInvalid:
+			invalid = true
+		case OverallInconclusive:
+			inconclusive = true
+		case OverallViolation:
+			violation = true
+		}
+	}
+	if inconclusive {
+		return OverallInconclusive
+	}
+	if invalid {
+		return OverallInvalid
+	}
+	if violation {
+		return OverallViolation
+	}
+	return OverallPass
 }
 
 func overallStatus(view evidence.View, evaluations []contracts.Result) OverallStatus {

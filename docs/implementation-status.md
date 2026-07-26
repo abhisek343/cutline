@@ -21,7 +21,7 @@ because the local environment has no Docker provider.
 | 12 | Durable evidence ingestion and freeze | Complete; CI integration required |
 | 13 | Causal graph and effect reconciliation | Complete; CI integration required |
 | 14 | CEL contract engine | Complete |
-| 15 | Checkpoint discovery and single-cut enumeration | Planned |
+| 15 | Checkpoint discovery and single-cut enumeration | Complete |
 | 16 | Boundary-pair and bounded-prefix search | Planned |
 | 17 | Stable failure signatures | Planned |
 | 18 | Failure minimizer | Planned |

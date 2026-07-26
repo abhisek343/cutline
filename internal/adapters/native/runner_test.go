@@ -61,6 +61,43 @@ func TestRunnerFaultyAndCleanCheckout(t *testing.T) {
 	}
 }
 
+func TestRunnerDiscoversBeforeExecutingSingleCut(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns Go fixture processes")
+	}
+	root := repositoryRoot(t)
+	spec, err := campaign.LoadFile(filepath.Join(root, "test", "fixtures", "checkout", "campaign-faulty.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	runner := Runner{BaseDirectory: root}
+	discoveryResult, discovery, err := runner.Discover(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !discovery.Complete() || len(discovery.Checkpoints) != 1 || discovery.Checkpoints[0].Name != "before-charge" {
+		t.Fatalf("discovery = %#v", discovery)
+	}
+	for _, event := range discoveryResult.Evidence.Events {
+		if event.Type == model.EventCancelRequested || event.Type == model.EventCancelObserved {
+			t.Fatalf("discovery injected cancellation: %#v", event)
+		}
+	}
+
+	result, err := runner.RunCampaign(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != OverallViolation || len(result.Schedules) != 1 || result.Plan.Schedules[0].CancelAt != "before-charge" {
+		t.Fatalf("campaign result = %#v", result)
+	}
+	if result.Schedules[0].Status != OverallViolation {
+		t.Fatalf("schedule status = %s", result.Schedules[0].Status)
+	}
+}
+
 func TestRunnerWithoutInstrumentationIsInconclusive(t *testing.T) {
 	t.Parallel()
 

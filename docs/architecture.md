@@ -55,6 +55,13 @@ sequenceDiagram
 The example is a violation only when the configured rule and evidence semantics
 say the committed charge crossed the prohibited boundary.
 
+Before execution, the native adapter runs a cancellation-free discovery pass.
+The discovery policy releases every reached point, derives the checkpoint set
+from canonical `checkpoint.reached` events, and records any visit bound or
+unreachable requested point. The coordinator then creates one stable single-cut
+schedule per eligible checkpoint in first-seen order; contracts run only on
+those cancellation schedules, never on discovery evidence.
+
 ## Temporal run
 
 ```mermaid
