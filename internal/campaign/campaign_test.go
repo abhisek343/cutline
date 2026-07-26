@@ -47,6 +47,19 @@ func TestParseAppliesDefaultsAndNormalizes(t *testing.T) {
 	}
 }
 
+func TestBoundedPrefixAppliesDepthDefault(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(validYAML, "strategy: checkpoint", "strategy: bounded-prefix", 1)
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Exploration.PrefixDepth != 3 {
+		t.Fatalf("PrefixDepth = %d, want 3", parsed.Exploration.PrefixDepth)
+	}
+}
+
 func TestDigestIsStableForSetOrdering(t *testing.T) {
 	t.Parallel()
 
@@ -87,6 +100,7 @@ func TestParseRejectsInvalidSemantics(t *testing.T) {
 		"version":    strings.Replace(validYAML, APIVersionV1Alpha1, "cutline.dev/v2", 1),
 		"adapter":    strings.Replace(validYAML, "adapter: go-test", "adapter: shell", 1),
 		"schedules":  strings.Replace(validYAML, "strategy: checkpoint", "strategy: checkpoint\n  maxSchedules: -1", 1),
+		"prefix":     strings.Replace(validYAML, "strategy: checkpoint", "strategy: bounded-prefix\n  prefixDepth: 10001", 1),
 		"contract":   strings.Replace(validYAML, "severity: critical", "severity: urgent", 1),
 		"expression": strings.Replace(validYAML, `expression: >`, `expression: "" #`, 1),
 	}

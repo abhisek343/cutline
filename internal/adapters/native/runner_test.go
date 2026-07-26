@@ -77,7 +77,7 @@ func TestRunnerDiscoversBeforeExecutingSingleCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !discovery.Complete() || len(discovery.Checkpoints) != 1 || discovery.Checkpoints[0].Name != "before-charge" {
+	if !discovery.Complete() || len(discovery.Checkpoints) != 2 || discovery.Checkpoints[0].Name != "before-charge" || discovery.Checkpoints[1].Name != "after-charge" {
 		t.Fatalf("discovery = %#v", discovery)
 	}
 	for _, event := range discoveryResult.Evidence.Events {
@@ -95,6 +95,43 @@ func TestRunnerDiscoversBeforeExecutingSingleCut(t *testing.T) {
 	}
 	if result.Schedules[0].Status != OverallViolation {
 		t.Fatalf("schedule status = %s", result.Schedules[0].Status)
+	}
+}
+
+func TestRunnerExecutesBoundaryPairAndBoundedPrefixPlans(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns Go fixture processes")
+	}
+	root := repositoryRoot(t)
+	tests := []struct {
+		campaign string
+		want     int
+	}{
+		{campaign: "campaign-boundary.yaml", want: 2},
+		{campaign: "campaign-prefix.yaml", want: 2},
+	}
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.campaign, func(t *testing.T) {
+			spec, err := campaign.LoadFile(filepath.Join(root, "test", "fixtures", "checkout", testCase.campaign))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			result, err := (Runner{BaseDirectory: root}).RunCampaign(ctx, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Schedules) != testCase.want || result.Status != OverallViolation {
+				t.Fatalf("status=%s schedules=%d plan=%#v", result.Status, len(result.Schedules), result.Plan)
+			}
+			for _, schedule := range result.Schedules {
+				if schedule.Status != OverallViolation && schedule.Status != OverallPass {
+					t.Fatalf("unexpected schedule status = %s", schedule.Status)
+				}
+			}
+		})
 	}
 }
 

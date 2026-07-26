@@ -112,7 +112,7 @@ func (r Runner) RunCampaign(ctx context.Context, spec campaign.Campaign) (Campai
 	if err != nil {
 		return CampaignResult{}, err
 	}
-	plan, err := explorer.EnumerateSingleCut(discovery, spec.Exploration.CancelAt, spec.Exploration.MaxSchedules)
+	plan, err := explorer.Enumerate(spec.Exploration.Strategy, discovery, spec.Exploration.CancelAt, spec.Exploration.MaxSchedules, spec.Exploration.PrefixDepth)
 	if err != nil {
 		return CampaignResult{}, err
 	}

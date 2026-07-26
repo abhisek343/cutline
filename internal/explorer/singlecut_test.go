@@ -80,3 +80,44 @@ func TestEnumerateSingleCutRejectsInvalidBound(t *testing.T) {
 		t.Fatal("zero max schedules accepted")
 	}
 }
+
+func TestEnumerateBoundaryPairsAndBoundedPrefixes(t *testing.T) {
+	t.Parallel()
+
+	discovery := Discovery{Checkpoints: []Checkpoint{
+		{Name: "first", FirstOrder: 1, Visits: 1},
+		{Name: "second", FirstOrder: 2, Visits: 1},
+		{Name: "third", FirstOrder: 3, Visits: 1},
+	}}
+	pairs, err := Enumerate("boundary-pair", discovery, nil, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs.Schedules) != 4 || pairs.Schedules[0].PairSide != "before" || pairs.Schedules[1].PairSide != "after" || pairs.Schedules[1].CancelAt != "second" {
+		t.Fatalf("pairs = %#v", pairs.Schedules)
+	}
+	if len(pairs.Schedules[1].ReleasePrefix) != 1 || pairs.Schedules[1].ReleasePrefix[0] != "first" {
+		t.Fatalf("after prefix = %#v", pairs.Schedules[1].ReleasePrefix)
+	}
+
+	prefixes, err := Enumerate("bounded-prefix", discovery, nil, 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prefixes.Schedules) != 3 || prefixes.PrefixDepth != 2 {
+		t.Fatalf("prefix plan = %#v", prefixes)
+	}
+	for index, schedule := range prefixes.Schedules {
+		if len(schedule.ReleasePrefix) != index || schedule.CancelAt != discovery.Checkpoints[index].Name {
+			t.Fatalf("prefix schedule %d = %#v", index, schedule)
+		}
+	}
+}
+
+func TestEnumerateRejectsUnknownStrategy(t *testing.T) {
+	t.Parallel()
+
+	if _, err := Enumerate("random", Discovery{}, nil, 1, 0); err == nil {
+		t.Fatal("unknown strategy accepted")
+	}
+}

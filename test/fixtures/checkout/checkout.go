@@ -54,6 +54,11 @@ func Execute(ctx context.Context, mode, ledgerPath string) error {
 	if err := effect.Commit(ctx); err != nil {
 		return err
 	}
+	// A second point makes release-prefix and boundary-pair exploration
+	// observable without changing the seeded payment invariant.
+	if err := cutline.Point(ctx, "after-charge"); err != nil && mode == ModeClean {
+		return err
+	}
 	if pointErr != nil {
 		return pointErr
 	}

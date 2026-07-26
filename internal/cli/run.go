@@ -59,7 +59,15 @@ func newRunCommand() *cobra.Command {
 					len(result.Schedules),
 				)
 				for index, schedule := range result.Schedules {
-					fmt.Fprintf(cmd.OutOrStdout(), "  schedule %d (%s): %s, events=%d, effects=%d\n", index+1, result.Plan.Schedules[index].CancelAt, schedule.Status, len(schedule.Evidence.Events), len(schedule.Effects))
+					planned := result.Plan.Schedules[index]
+					description := planned.CancelAt
+					if planned.PairSide != "" {
+						description += " " + planned.PairSide + " " + planned.PairPoint
+					}
+					if len(planned.ReleasePrefix) > 0 {
+						description += " prefix=" + strings.Join(planned.ReleasePrefix, ",")
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "  schedule %d (%s): %s, events=%d, effects=%d\n", index+1, description, schedule.Status, len(schedule.Evidence.Events), len(schedule.Effects))
 					for _, evaluation := range schedule.Evaluations {
 						fmt.Fprintf(cmd.OutOrStdout(), "    contract %s: %s — %s\n", evaluation.Contract, evaluation.Status, evaluation.Message)
 					}

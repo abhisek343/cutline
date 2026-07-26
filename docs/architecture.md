@@ -62,6 +62,9 @@ unreachable requested point. The coordinator then creates one stable single-cut
 schedule per eligible checkpoint in first-seen order; contracts run only on
 those cancellation schedules, never on discovery evidence.
 
+Boundary-pair plans create adjacent before/after schedules, while bounded-prefix
+plans disclose the release prefix and its configured depth in each schedule.
+
 ## Temporal run
 
 ```mermaid

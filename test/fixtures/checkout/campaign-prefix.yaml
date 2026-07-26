@@ -1,0 +1,43 @@
+apiVersion: cutline.dev/v1alpha1
+kind: Campaign
+name: checkout-bounded-prefix
+
+target:
+  adapter: go-test
+  command:
+    - go
+    - test
+    - ./test/fixtures/checkout
+    - -run
+    - ^TestCutlineTarget$
+    - -count=1
+    - -args
+    - -cutline-fixture-mode=faulty
+
+exploration:
+  strategy: bounded-prefix
+  prefixDepth: 1
+  maxSchedules: 2
+  maxPointVisits: 10
+  scheduleTimeout: 30s
+  drainTimeout: 5s
+  seed: 1
+
+contracts:
+  - name: no-charge-after-cancel
+    version: 1
+    severity: critical
+    requires:
+      - cancellation.observed
+      - effects.authoritative_commit
+      - drain.registered_tasks
+    boundary: cancellation-observed
+    expression: >
+      !effects.exists(e,
+        e.kind == "payment.charge" &&
+        e.committed &&
+        e.startedAfter(cancel.observedAt))
+
+output:
+  directory: .cutline
+  format: text
