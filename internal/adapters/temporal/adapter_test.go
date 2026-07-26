@@ -6,6 +6,9 @@ import (
 
 	"github.com/abhisek343/cutline/internal/evidence"
 	"github.com/abhisek343/cutline/internal/model"
+	"go.temporal.io/api/enums/v1"
+	historypb "go.temporal.io/api/history/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestWorkflowAdapterTranslatesCancellationLifecycle(t *testing.T) {
@@ -72,5 +75,28 @@ func TestActivityEffectHistoryRequiresKnownOutcome(t *testing.T) {
 	}
 	if _, err := EffectHistory(ActivityEffect{EffectID: "charge-1", Kind: "payment.charge", Outcome: "maybe", ObservedAt: time.Unix(1, 0).UTC()}); err == nil {
 		t.Fatal("EffectHistory accepted unknown outcome")
+	}
+}
+
+func TestLiveOptionsRejectRemoteEndpoint(t *testing.T) {
+	_, err := (LiveOptions{Address: "temporal.example:7233", WorkflowID: "checkout"}).normalized()
+	if err == nil {
+		t.Fatal("remote Temporal endpoint was accepted")
+	}
+	options, err := (LiveOptions{Address: "localhost:7233", WorkflowID: "checkout"}).normalized()
+	if err != nil || options.Namespace != "default" {
+		t.Fatalf("options=%#v error=%v", options, err)
+	}
+}
+
+func TestSDKHistoryTranslationPreservesKnownAndUnknownFacts(t *testing.T) {
+	base := time.Unix(1, 0).UTC()
+	known := translateSDKEvent(&historypb.HistoryEvent{EventId: 7, EventType: enums.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED, EventTime: timestamppb.New(base)}, LiveOptions{WorkflowID: "checkout", RunID: "temporal-run"})
+	if known.ID != "7" || known.Type != "workflow.cancel_requested" || !known.ObservedAt.Equal(base) {
+		t.Fatalf("known event=%#v", known)
+	}
+	unknown := translateSDKEvent(&historypb.HistoryEvent{EventId: 8, EventType: enums.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, EventTime: timestamppb.New(base)}, LiveOptions{WorkflowID: "checkout"})
+	if unknown.Type != "temporal.workflowexecutionterminated" {
+		t.Fatalf("unknown event=%#v", unknown)
 	}
 }
