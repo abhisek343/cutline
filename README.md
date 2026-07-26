@@ -28,7 +28,8 @@ escaped static HTML or machine-readable JSON reports. The Temporal adapter
 boundary is isolated and translates workflow history into the same canonical
 events; pinned SDK/server integration is the remaining runtime-specific step.
 Activity effect outcomes use explicit identities and preserve unknown dependency
-results instead of guessing a commit.
+results instead of guessing a commit. The reference release gate also checks 20
+faulty replays (at least 19 exact), a clean pass, and the 14,400-line budget.
 
 ## What a test looks like
 

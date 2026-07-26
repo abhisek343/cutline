@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: go build -trimpath -o /tmp/cutline ./cmd/cutline
 
+      - name: Line budget
+        run: bash scripts/line-budget.sh
+
   integration-postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10

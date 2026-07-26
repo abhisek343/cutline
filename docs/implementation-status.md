@@ -30,7 +30,7 @@ because the local environment has no Docker provider.
 | 21 | Static report | Complete |
 | 22 | Temporal workflow adapter | Complete; SDK integration required |
 | 23 | Temporal activity adapter | Complete; SDK integration required |
-| 24 | Benchmark and release gate | Planned |
+| 24 | Benchmark and release gate | Complete |
 
 The current native manual probes must continue to show a faulty checkout as a
 contract violation and a clean checkout as a pass. In both cases the typed view
@@ -64,3 +64,9 @@ explicit follow-up rather than a hidden claim.
 Slice 23 adds typed activity-effect history construction and correlation by
 activity/effect identity. Unknown dependency outcomes are represented as
 canonical `effect.unknown` transitions and invalid outcome labels are rejected.
+
+Slice 24 runs the seeded faulty checkout 20 times, requires at least 19 exact
+failure-signature matches, verifies the corrected checkout passes without
+signatures, enforces the 14,400-line budget, and exposes the combined `make
+release` gate. Temporal/PostgreSQL external-container execution remains an
+explicit CI dependency.
