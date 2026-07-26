@@ -32,6 +32,7 @@ func New(stdout, stderr io.Writer) *cobra.Command {
 		newMinimizeCommand(),
 		newReplayCommand(),
 		newReportCommand(),
+		newTemporalCommand(),
 	)
 	return root
 }
