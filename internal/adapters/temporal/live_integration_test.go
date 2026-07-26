@@ -16,7 +16,7 @@ func TestLiveFetchReadsCanceledWorkflowFromTemporalServer(t *testing.T) {
 	const namespace, taskQueue, workflowID = "default", "cutline-live", "cutline-live-cancel"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	api, err := client.NewClient(client.Options{HostPort: "127.0.0.1:7233", Namespace: namespace})
+	api, err := newLiveClient(ctx, namespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +83,20 @@ func startLiveWorker(ctx context.Context, api client.Client, taskQueue string) (
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func newLiveClient(ctx context.Context, namespace string) (client.Client, error) {
+	for {
+		api, err := client.NewClient(client.Options{HostPort: "127.0.0.1:7233", Namespace: namespace})
+		if err == nil {
+			return api, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
