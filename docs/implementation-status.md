@@ -24,7 +24,7 @@ because the local environment has no Docker provider.
 | 15 | Checkpoint discovery and single-cut enumeration | Complete |
 | 16 | Boundary-pair and bounded-prefix search | Complete |
 | 17 | Stable failure signatures | Complete |
-| 18 | Failure minimizer | Complete |
+| 18 | Failure minimizer | Complete; `cutline minimize --campaign ... --output ...` writes a stable replay capsule |
 | 19 | Failure-capsule builder | Complete |
 | 20 | Replay engine | Complete |
 | 21 | Static report | Complete |
