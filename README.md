@@ -24,9 +24,9 @@ benchmark are runnable, with stable failure signatures attached to violations
 and a bounded deterministic minimizer that preserves those signatures. Stable
 violations can now be packaged as checksummed, redaction-aware failure capsules
 and replayed with exact-signature comparison. Those capsules also render as
-escaped static HTML or machine-readable JSON reports. The Temporal adapter
-boundary is isolated and translates workflow history into the same canonical
-events; pinned SDK/server integration is the remaining runtime-specific step.
+escaped static HTML or machine-readable JSON reports. The Temporal adapter now
+uses the Temporal Go SDK to read a completed local workflow execution over
+gRPC and translate its authoritative history into the same canonical events.
 Activity effect outcomes use explicit identities and preserve unknown dependency
 results instead of guessing a commit. The reference release gate also checks 20
 faulty replays (at least 19 exact), a clean pass, and the 14,400-line budget.
@@ -104,6 +104,17 @@ go build -o ./bin/cutline ./cmd/cutline
 
 The faulty campaign exits `2` with a violation; the clean campaign exits `0`.
 
+To inspect a workflow that ran on a local Temporal development server:
+
+```text
+./bin/cutline temporal inspect --workflow-id your-workflow-id --namespace default
+```
+
+`temporal inspect` is read-only and intentionally accepts only loopback
+Temporal endpoints. It is evidence ingestion, not yet the campaign scheduler
+for arbitrary Temporal workers; checkpoints and business-effect markers remain
+an explicit next adapter increment.
+
 ## Development
 
 Run the fast local gate with `make check`. PostgreSQL integration tests use a
@@ -111,11 +122,15 @@ pinned Testcontainers image:
 
 ```text
 make integration
+make temporal-integration
 ```
 
 For manual database work, `docker compose up -d postgres` exposes the local-only
 database on `127.0.0.1:54329`. The CI integration job starts its own isolated
 container and applies every embedded migration twice to verify idempotency.
+`make temporal-integration` starts pinned PostgreSQL and Temporal containers,
+runs a worker whose workflow is canceled through the SDK, then verifies that
+Cutline fetches the live history over gRPC before tearing those containers down.
 
 ## Core result
 
