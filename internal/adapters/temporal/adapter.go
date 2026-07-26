@@ -143,6 +143,9 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 	}
 	attrs := cloneAttributes(raw.Attributes)
 	attrs["temporal.eventType"] = raw.Type
+	if strings.HasPrefix(raw.Type, "activity.") && attrs["taskId"] != "" {
+		activity, identity, name = true, attrs["taskId"], attrs["taskId"]
+	}
 	if activity && identity != "" && attrs["taskId"] == "" {
 		attrs["taskId"] = identity
 	}
@@ -156,6 +159,8 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 	switch raw.Type {
 	case "workflow.started":
 		typ = model.EventSessionStarted
+	case "workflow.task_scheduled", "workflow.task_started", "workflow.task_completed", "workflow.signaled":
+		typ, prefix = model.EventSchedulerAction, "scheduler"
 	case "workflow.ended":
 		typ = model.EventSessionEnded
 	case "workflow.completed", "workflow.failed", "workflow.canceled":

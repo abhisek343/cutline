@@ -1,0 +1,27 @@
+name: cutline-temporal
+
+services:
+  postgresql:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_USER: temporal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: postgresql
+    ports:
+      - "127.0.0.1:7233:7233"
