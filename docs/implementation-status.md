@@ -28,8 +28,8 @@ because the local environment has no Docker provider.
 | 19 | Failure-capsule builder | Complete |
 | 20 | Replay engine | Complete |
 | 21 | Static report | Complete |
-| 22 | Temporal workflow adapter | Complete; SDK integration required |
-| 23 | Temporal activity adapter | Complete; SDK integration required |
+| 22 | Temporal workflow adapter | Complete; local SDK/server history ingestion verified |
+| 23 | Temporal activity adapter | Complete; live activity lifecycle history translation verified |
 | 24 | Benchmark and release gate | Complete |
 
 The current native manual probes must continue to show a faulty checkout as a
@@ -56,14 +56,19 @@ Slice 21 renders validated capsule data as JSON or escaped standalone HTML.
 The report command never executes the target and refuses to overwrite an
 existing output file.
 
-Slice 22 adds the isolated Temporal history DTO boundary and workflow lifecycle
-translator. Because this module has no Temporal SDK dependency in the current
-repository, CI integration with a pinned local Temporal server remains an
-explicit follow-up rather than a hidden claim.
+Slice 22 adds a local-only Temporal Go SDK client and `cutline temporal inspect`.
+It retrieves one completed workflow history over gRPC, preserves unsupported
+history as incomplete evidence, and translates standard workflow-task,
+cancellation, and terminal lifecycle facts through the canonical adapter.
+The CI fixture starts pinned PostgreSQL and Temporal containers, runs a real Go
+worker, cancels its workflow, and verifies the resulting live evidence.
 
 Slice 23 adds typed activity-effect history construction and correlation by
-activity/effect identity. Unknown dependency outcomes are represented as
-canonical `effect.unknown` transitions and invalid outcome labels are rejected.
+activity/effect identity. Live history also captures Temporal activity lifecycle
+events. Unknown dependency outcomes are represented as canonical
+`effect.unknown` transitions and invalid outcome labels are rejected; a worker
+must still supply authoritative external-effect evidence rather than relying on
+Temporal history alone.
 
 Slice 24 runs the seeded faulty checkout 20 times, requires at least 19 exact
 failure-signature matches, verifies the corrected checkout passes without
