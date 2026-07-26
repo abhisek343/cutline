@@ -65,13 +65,18 @@ A race-detector pass complements but does not replace Cutline's semantic tests.
 Use Testcontainers for:
 
 - PostgreSQL migrations, constraints, transaction failure, and reconnection;
-- local Temporal server and worker behavior;
 - fixture dependencies with authoritative effect ledgers;
 - coordinator/SDK Unix-socket protocol;
 - capsule creation and exact replay;
 - static report generation.
 
 Pin image versions. Tests must time out and clean up by run ID.
+
+Use the pinned Docker Compose fixture for the live Temporal server and worker
+path. It runs a local PostgreSQL-backed Temporal Service, starts a real Go
+worker, cancels a workflow through the SDK, and fetches the completed history
+through Cutline's loopback-only SDK client. The fixture runs as
+`make temporal-integration` and cleans up its named containers and volumes.
 
 ### End-to-end benchmark fixtures
 
