@@ -21,8 +21,9 @@ native Go SDK/control path, PostgreSQL evidence ledger, typed causal view,
 checkpoint discovery, bounded single-cut enumeration, boundary-pair and
 bounded-prefix exploration, typed CEL contracts, and the faulty/correct checkout
 benchmark are runnable, with stable failure signatures attached to violations
-and a bounded deterministic minimizer that preserves those signatures.
-Capsules, reports, and Temporal support are being delivered next.
+and a bounded deterministic minimizer that preserves those signatures. Stable
+violations can now be packaged as checksummed, redaction-aware failure capsules.
+Reports and Temporal support are being delivered next.
 
 ## What a test looks like
 

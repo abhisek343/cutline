@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/abhisek343/cutline/internal/campaign"
+	"github.com/abhisek343/cutline/internal/capsule"
 	"github.com/abhisek343/cutline/internal/contracts"
 	"github.com/abhisek343/cutline/internal/minimize"
 	"github.com/abhisek343/cutline/internal/model"
@@ -186,6 +187,14 @@ func TestRunnerMinimizesNativeFailureSignature(t *testing.T) {
 	}
 	if len(minimized.Attempts) != 2 {
 		t.Fatalf("confirmation attempts = %d, want 2", len(minimized.Attempts))
+	}
+	directory := filepath.Join(t.TempDir(), "capsule")
+	manifest, err := runner.BuildCapsule(spec, campaignResult.Plan.Schedules[0], campaignResult.Schedules[0], minimized, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capsule.ValidateDirectory(directory); err != nil || manifest.CapsuleID == "" {
+		t.Fatalf("capsule validation: manifest=%#v error=%v", manifest, err)
 	}
 }
 

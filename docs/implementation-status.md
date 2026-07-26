@@ -25,7 +25,7 @@ because the local environment has no Docker provider.
 | 16 | Boundary-pair and bounded-prefix search | Complete |
 | 17 | Stable failure signatures | Complete |
 | 18 | Failure minimizer | Complete |
-| 19 | Failure-capsule builder | Planned |
+| 19 | Failure-capsule builder | Complete |
 | 20 | Replay engine | Planned |
 | 21 | Static report | Planned |
 | 22 | Temporal workflow adapter | Planned |
@@ -41,3 +41,9 @@ Slice 18 also verifies that native candidate execution uses the same explicit
 release-prefix policy as exploration. The deterministic minimizer only accepts
 a candidate when it reproduces the exact stable failure-signature digest, then
 confirms the resulting schedule within a bounded attempt budget.
+
+Slice 19 packages a stable violation into a versioned directory with canonical
+events, derived effects and graph data, the minimized schedule, checksums, a
+redacted target/dependency record, and escaped static report data. Import
+validation rejects traversal, symlinks, tampered artifacts, and incompatible
+schema versions.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/abhisek343/cutline/internal/campaign"
+	"github.com/abhisek343/cutline/internal/capsule"
 	"github.com/abhisek343/cutline/internal/contracts"
 	"github.com/abhisek343/cutline/internal/control"
 	"github.com/abhisek343/cutline/internal/evidence"
@@ -154,6 +155,15 @@ func (r Runner) MinimizeSchedule(ctx context.Context, spec campaign.Campaign, sc
 		}
 		return result.Signatures, nil
 	})
+}
+
+func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule, result Result, minimization minimize.Result, destination string) (capsule.Manifest, error) {
+	return capsule.BuildDirectory(capsule.Input{
+		Campaign: spec, RunID: result.RunID, AttemptID: result.AttemptID,
+		Execution: capsule.Execution{Status: string(result.Status), ExitCode: result.ExitCode, Duration: result.Duration},
+		Schedule:  schedule, Snapshot: result.Evidence, View: result.View, Effects: result.Effects,
+		Evaluations: result.Evaluations, Signatures: result.Signatures, Minimization: &minimization,
+	}, destination)
 }
 
 func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, policy scheduler.Policy, discovery bool) (Result, error) {
