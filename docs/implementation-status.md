@@ -29,7 +29,7 @@ because the local environment has no Docker provider.
 | 20 | Replay engine | Complete |
 | 21 | Static report | Complete |
 | 22 | Temporal workflow adapter | Complete; SDK integration required |
-| 23 | Temporal activity adapter | Planned |
+| 23 | Temporal activity adapter | Complete; SDK integration required |
 | 24 | Benchmark and release gate | Planned |
 
 The current native manual probes must continue to show a faulty checkout as a
@@ -60,3 +60,7 @@ Slice 22 adds the isolated Temporal history DTO boundary and workflow lifecycle
 translator. Because this module has no Temporal SDK dependency in the current
 repository, CI integration with a pinned local Temporal server remains an
 explicit follow-up rather than a hidden claim.
+
+Slice 23 adds typed activity-effect history construction and correlation by
+activity/effect identity. Unknown dependency outcomes are represented as
+canonical `effect.unknown` transitions and invalid outcome labels are rejected.

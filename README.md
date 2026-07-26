@@ -27,6 +27,8 @@ and replayed with exact-signature comparison. Those capsules also render as
 escaped static HTML or machine-readable JSON reports. The Temporal adapter
 boundary is isolated and translates workflow history into the same canonical
 events; pinned SDK/server integration is the remaining runtime-specific step.
+Activity effect outcomes use explicit identities and preserve unknown dependency
+results instead of guessing a commit.
 
 ## What a test looks like
 

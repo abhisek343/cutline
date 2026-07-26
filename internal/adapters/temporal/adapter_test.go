@@ -64,3 +64,13 @@ func TestTemporalAdapterReportsUnsupportedHistory(t *testing.T) {
 		t.Fatalf("snapshot=%#v error=%v", snapshot, err)
 	}
 }
+
+func TestActivityEffectHistoryRequiresKnownOutcome(t *testing.T) {
+	value, err := EffectHistory(ActivityEffect{EffectID: "charge-1", TaskID: "charge", Kind: "payment.charge", Outcome: "unknown", ObservedAt: time.Unix(1, 0).UTC()})
+	if err != nil || value.Type != "activity.effect_unknown" || value.Attributes["effectId"] != "charge-1" {
+		t.Fatalf("history=%#v error=%v", value, err)
+	}
+	if _, err := EffectHistory(ActivityEffect{EffectID: "charge-1", Kind: "payment.charge", Outcome: "maybe", ObservedAt: time.Unix(1, 0).UTC()}); err == nil {
+		t.Fatal("EffectHistory accepted unknown outcome")
+	}
+}

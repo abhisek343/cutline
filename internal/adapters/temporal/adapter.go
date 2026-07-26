@@ -35,6 +35,14 @@ type ActivityHistory struct {
 	Events     []HistoryEvent  `json:"events"`
 }
 
+type ActivityEffect struct {
+	EffectID   string
+	TaskID     string
+	Kind       string
+	Outcome    string
+	ObservedAt time.Time
+}
+
 type RunHistory struct {
 	Workflow   WorkflowHistory   `json:"workflow"`
 	Activities []ActivityHistory `json:"activities"`
@@ -55,7 +63,21 @@ func (a Adapter) TranslateWorkflow(input WorkflowHistory) (ingest.Snapshot, erro
 }
 
 func (a Adapter) TranslateActivity(input ActivityHistory) (ingest.Snapshot, error) {
+	if strings.TrimSpace(input.ActivityID) == "" {
+		return ingest.Snapshot{}, fmt.Errorf("activity history requires activityId")
+	}
 	return a.Translate(RunHistory{Workflow: WorkflowHistory{RunID: input.RunID, AttemptID: input.AttemptID, SessionID: input.SessionID}, Activities: []ActivityHistory{input}})
+}
+
+func EffectHistory(effect ActivityEffect) (HistoryEvent, error) {
+	if strings.TrimSpace(effect.EffectID) == "" || strings.TrimSpace(effect.Kind) == "" || effect.ObservedAt.IsZero() {
+		return HistoryEvent{}, fmt.Errorf("activity effect requires effectId, kind, and observedAt")
+	}
+	outcome := strings.ToLower(strings.TrimSpace(effect.Outcome))
+	if outcome != "declared" && outcome != "attempted" && outcome != "committed" && outcome != "failed" && outcome != "unknown" {
+		return HistoryEvent{}, fmt.Errorf("unsupported activity effect outcome %q", effect.Outcome)
+	}
+	return HistoryEvent{ID: effect.EffectID, Type: "activity.effect_" + outcome, ObservedAt: effect.ObservedAt, Attributes: map[string]string{"effectId": effect.EffectID, "taskId": effect.TaskID, "kind": effect.Kind}}, nil
 }
 
 func (a Adapter) Translate(input RunHistory) (ingest.Snapshot, error) {
@@ -121,6 +143,9 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 	}
 	attrs := cloneAttributes(raw.Attributes)
 	attrs["temporal.eventType"] = raw.Type
+	if activity && identity != "" && attrs["taskId"] == "" {
+		attrs["taskId"] = identity
+	}
 	if strings.HasPrefix(raw.Type, "activity.effect_") {
 		name = attrs["effectId"]
 		if name == "" {
