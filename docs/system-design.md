@@ -77,6 +77,16 @@ Version 1 runs on one Linux host:
 The loopback TCP fallback binds only to `127.0.0.1` and uses the same per-run
 authentication token. Remote multi-host execution is out of scope.
 
+### Live Temporal evidence boundary
+
+`cutline temporal inspect` connects only to a loopback Temporal endpoint. It
+does not start, signal, cancel, or mutate a workflow; it fetches one completed
+workflow history with the Temporal Go SDK and converts it at the adapter
+boundary. Standard workflow-task and activity lifecycle events are preserved as
+canonical scheduler/task facts. Unsupported history is marked incomplete rather
+than silently discarded. Authoritative external business effects and explicit
+checkpoint/cancellation-observation markers remain worker-provided evidence.
+
 ## 5. Canonical execution lifecycle
 
 Each run has these phases:
