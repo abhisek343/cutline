@@ -3,7 +3,12 @@ set -euo pipefail
 
 compose_file="test/temporal/docker-compose.yml"
 cleanup() {
-  docker compose -f "$compose_file" down --volumes --remove-orphans
+	status=$?
+	if (( status != 0 )); then
+		docker compose -f "$compose_file" logs --no-color || true
+	fi
+	docker compose -f "$compose_file" down --volumes --remove-orphans || true
+	exit "$status"
 }
 
 docker compose -f "$compose_file" up --detach --wait
