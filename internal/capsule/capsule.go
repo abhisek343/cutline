@@ -362,6 +362,18 @@ func ValidateDirectory(root string) (Manifest, error) {
 	return manifest, nil
 }
 
+func ReadArtifact(root, relative string) ([]byte, error) {
+	path, err := safeFile(root, relative)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read capsule artifact %s: %w", relative, err)
+	}
+	return data, nil
+}
+
 func (in Input) validate() error {
 	if err := model.ValidateID(string(in.RunID)); err != nil {
 		return fmt.Errorf("run ID: %w", err)

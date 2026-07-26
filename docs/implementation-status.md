@@ -26,7 +26,7 @@ because the local environment has no Docker provider.
 | 17 | Stable failure signatures | Complete |
 | 18 | Failure minimizer | Complete |
 | 19 | Failure-capsule builder | Complete |
-| 20 | Replay engine | Planned |
+| 20 | Replay engine | Complete |
 | 21 | Static report | Planned |
 | 22 | Temporal workflow adapter | Planned |
 | 23 | Temporal activity adapter | Planned |
@@ -47,3 +47,7 @@ events, derived effects and graph data, the minimized schedule, checksums, a
 redacted target/dependency record, and escaped static report data. Import
 validation rejects traversal, symlinks, tampered artifacts, and incompatible
 schema versions.
+
+Slice 20 validates capsules before reading any executable input, checks target
+compatibility, executes the minimized schedule through the native runner, and
+labels exact, comparative, different-signature, and non-reproduced outcomes.

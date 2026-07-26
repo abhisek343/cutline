@@ -13,6 +13,7 @@ import (
 	"github.com/abhisek343/cutline/internal/contracts"
 	"github.com/abhisek343/cutline/internal/minimize"
 	"github.com/abhisek343/cutline/internal/model"
+	"github.com/abhisek343/cutline/internal/replay"
 )
 
 func TestRunnerFaultyAndCleanCheckout(t *testing.T) {
@@ -195,6 +196,10 @@ func TestRunnerMinimizesNativeFailureSignature(t *testing.T) {
 	}
 	if _, err := capsule.ValidateDirectory(directory); err != nil || manifest.CapsuleID == "" {
 		t.Fatalf("capsule validation: manifest=%#v error=%v", manifest, err)
+	}
+	replayed, err := runner.ReplayCapsule(ctx, directory, replay.Config{})
+	if err != nil || replayed.Status != replay.StatusReproduced || !replayed.Exact {
+		t.Fatalf("replay result=%#v error=%v", replayed, err)
 	}
 }
 

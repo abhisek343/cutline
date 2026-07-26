@@ -99,7 +99,7 @@ func TestRunRejectsUnknownField(t *testing.T) {
 func TestPlaceholderCommandsAreExplicit(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"minimize", "replay", "report"} {
+	for _, name := range []string{"minimize", "report"} {
 		_, _, err := execute(t, name)
 		if !errors.Is(err, ErrNotImplemented) {
 			t.Errorf("%s error = %v, want ErrNotImplemented", name, err)

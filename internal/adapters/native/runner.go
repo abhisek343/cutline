@@ -26,6 +26,7 @@ import (
 	"github.com/abhisek343/cutline/internal/ledger"
 	"github.com/abhisek343/cutline/internal/minimize"
 	"github.com/abhisek343/cutline/internal/model"
+	"github.com/abhisek343/cutline/internal/replay"
 	"github.com/abhisek343/cutline/internal/scheduler"
 	"github.com/abhisek343/cutline/internal/signature"
 )
@@ -164,6 +165,16 @@ func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule,
 		Schedule:  schedule, Snapshot: result.Evidence, View: result.View, Effects: result.Effects,
 		Evaluations: result.Evaluations, Signatures: result.Signatures, Minimization: &minimization,
 	}, destination)
+}
+
+func (r Runner) ReplayCapsule(ctx context.Context, root string, config replay.Config) (replay.Result, error) {
+	return replay.Run(ctx, root, config, func(candidateContext context.Context, spec campaign.Campaign, schedule explorer.Schedule) ([]signature.Signature, error) {
+		result, err := r.RunSchedule(candidateContext, spec, schedule)
+		if err != nil {
+			return nil, err
+		}
+		return result.Signatures, nil
+	})
 }
 
 func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, policy scheduler.Policy, discovery bool) (Result, error) {

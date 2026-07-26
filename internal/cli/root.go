@@ -33,7 +33,7 @@ func New(stdout, stderr io.Writer) *cobra.Command {
 		newDoctorCommand(info),
 		newRunCommand(),
 		placeholderCommand("minimize", "minimize a failing schedule"),
-		placeholderCommand("replay", "replay a failure capsule"),
+		newReplayCommand(),
 		placeholderCommand("report", "render a run report"),
 	)
 	return root
