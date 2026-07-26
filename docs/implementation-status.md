@@ -28,7 +28,7 @@ because the local environment has no Docker provider.
 | 19 | Failure-capsule builder | Complete |
 | 20 | Replay engine | Complete |
 | 21 | Static report | Complete |
-| 22 | Temporal workflow adapter | Planned |
+| 22 | Temporal workflow adapter | Complete; SDK integration required |
 | 23 | Temporal activity adapter | Planned |
 | 24 | Benchmark and release gate | Planned |
 
@@ -55,3 +55,8 @@ labels exact, comparative, different-signature, and non-reproduced outcomes.
 Slice 21 renders validated capsule data as JSON or escaped standalone HTML.
 The report command never executes the target and refuses to overwrite an
 existing output file.
+
+Slice 22 adds the isolated Temporal history DTO boundary and workflow lifecycle
+translator. Because this module has no Temporal SDK dependency in the current
+repository, CI integration with a pinned local Temporal server remains an
+explicit follow-up rather than a hidden claim.
