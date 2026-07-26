@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: fmt vet test race integration check build line-budget benchmark release
+.PHONY: fmt vet test race integration temporal-integration check build line-budget benchmark release
 
 fmt:
 	$(GO) fmt ./...
@@ -16,6 +16,9 @@ race:
 
 integration:
 	$(GO) test -tags=integration ./... -count=1 -timeout=10m
+
+temporal-integration:
+	bash test/temporal/run-integration.sh
 
 check: fmt vet test race
 
