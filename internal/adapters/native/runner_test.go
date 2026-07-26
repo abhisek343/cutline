@@ -10,6 +10,7 @@ import (
 
 	"github.com/abhisek343/cutline/internal/campaign"
 	"github.com/abhisek343/cutline/internal/contracts"
+	"github.com/abhisek343/cutline/internal/minimize"
 	"github.com/abhisek343/cutline/internal/model"
 )
 
@@ -132,12 +133,59 @@ func TestRunnerExecutesBoundaryPairAndBoundedPrefixPlans(t *testing.T) {
 			if len(result.Schedules) != testCase.want || result.Status != OverallViolation {
 				t.Fatalf("status=%s schedules=%d plan=%#v", result.Status, len(result.Schedules), result.Plan)
 			}
-			for _, schedule := range result.Schedules {
+			for index, schedule := range result.Schedules {
 				if schedule.Status != OverallViolation && schedule.Status != OverallPass {
 					t.Fatalf("unexpected schedule status = %s", schedule.Status)
 				}
+				if testCase.campaign == "campaign-boundary.yaml" {
+					wantStatus := OverallViolation
+					if index == 1 {
+						wantStatus = OverallPass
+					}
+					if schedule.Status != wantStatus {
+						t.Fatalf("boundary schedule %d status = %s, want %s", index, schedule.Status, wantStatus)
+					}
+				}
 			}
 		})
+	}
+}
+
+func TestRunnerMinimizesNativeFailureSignature(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns Go fixture processes")
+	}
+	root := repositoryRoot(t)
+	spec, err := campaign.LoadFile(filepath.Join(root, "test", "fixtures", "checkout", "campaign-boundary.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	runner := Runner{BaseDirectory: root}
+	campaignResult, err := runner.RunCampaign(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(campaignResult.Schedules) == 0 || len(campaignResult.Schedules[0].Signatures) != 1 {
+		t.Fatalf("campaign result = %#v", campaignResult)
+	}
+	target := campaignResult.Schedules[0].Signatures[0]
+	minimized, err := runner.MinimizeSchedule(ctx, spec, campaignResult.Plan.Schedules[0], target, minimize.Config{
+		MaxAttempts:   8,
+		Confirmations: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !minimized.Stable || minimized.BudgetExhausted {
+		t.Fatalf("minimization result = %#v", minimized)
+	}
+	if len(minimized.Minimized.ReleasePrefix) != 0 {
+		t.Fatalf("minimized prefix = %#v", minimized.Minimized.ReleasePrefix)
+	}
+	if len(minimized.Attempts) != 2 {
+		t.Fatalf("confirmation attempts = %d, want 2", len(minimized.Attempts))
 	}
 }
 

@@ -24,7 +24,7 @@ because the local environment has no Docker provider.
 | 15 | Checkpoint discovery and single-cut enumeration | Complete |
 | 16 | Boundary-pair and bounded-prefix search | Complete |
 | 17 | Stable failure signatures | Complete |
-| 18 | Failure minimizer | Planned |
+| 18 | Failure minimizer | Complete |
 | 19 | Failure-capsule builder | Planned |
 | 20 | Replay engine | Planned |
 | 21 | Static report | Planned |
@@ -36,3 +36,8 @@ The current native manual probes must continue to show a faulty checkout as a
 contract violation and a clean checkout as a pass. In both cases the typed view
 must be complete and must expose cancellation ordering, drain evidence, and
 authoritative-effect reconciliation.
+
+Slice 18 also verifies that native candidate execution uses the same explicit
+release-prefix policy as exploration. The deterministic minimizer only accepts
+a candidate when it reproduces the exact stable failure-signature digest, then
+confirms the resulting schedule within a bounded attempt budget.

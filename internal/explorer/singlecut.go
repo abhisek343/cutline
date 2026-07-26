@@ -94,6 +94,13 @@ func (p Plan) Complete() bool {
 	return len(p.Schedules) > 0 && len(p.Unreachable) == 0 && len(p.DiscoveryIncomplete) == 0 && !p.DiscoveryTruncated
 }
 
+func (s Schedule) WithReleasePrefix(prefix []string) Schedule {
+	s.ReleasePrefix = append([]string(nil), prefix...)
+	value, _ := model.ContentID("schedule", s.Strategy, fmt.Sprint(s.Ordinal), s.CancelAt, strings.Join(s.ReleasePrefix, "\x00"), s.PairPoint, s.PairSide)
+	s.ID = value
+	return s
+}
+
 // Enumerate selects the deterministic strategy implementation used by a
 // campaign. checkpoint is retained as an alias for the original single-cut
 // strategy name.

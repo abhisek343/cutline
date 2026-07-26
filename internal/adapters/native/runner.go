@@ -23,6 +23,7 @@ import (
 	"github.com/abhisek343/cutline/internal/fixtureledger"
 	"github.com/abhisek343/cutline/internal/ingest"
 	"github.com/abhisek343/cutline/internal/ledger"
+	"github.com/abhisek343/cutline/internal/minimize"
 	"github.com/abhisek343/cutline/internal/model"
 	"github.com/abhisek343/cutline/internal/scheduler"
 	"github.com/abhisek343/cutline/internal/signature"
@@ -125,7 +126,7 @@ func (r Runner) RunCampaign(ctx context.Context, spec campaign.Campaign) (Campai
 		scheduleSpec.Exploration.Strategy = "single-cut"
 		scheduleSpec.Exploration.CancelAt = []string{schedule.CancelAt}
 		scheduleSpec.Exploration.MaxSchedules = 1
-		scheduleResult, runErr := r.Run(ctx, scheduleSpec)
+		scheduleResult, runErr := r.RunSchedule(ctx, scheduleSpec, schedule)
 		if runErr != nil {
 			return CampaignResult{}, fmt.Errorf("run schedule %s: %w", schedule.ID, runErr)
 		}
@@ -134,6 +135,25 @@ func (r Runner) RunCampaign(ctx context.Context, spec campaign.Campaign) (Campai
 	result.Status = overallCampaignStatus(plan, result.Schedules)
 	result.Signatures = uniqueSignatures(result.Schedules)
 	return result, nil
+}
+
+func (r Runner) RunSchedule(ctx context.Context, spec campaign.Campaign, schedule explorer.Schedule) (Result, error) {
+	policy, err := scheduler.NewPrefixCut(schedule.CancelAt, schedule.ReleasePrefix)
+	if err != nil {
+		return Result{}, err
+	}
+	spec.Exploration.CancelAt = []string{schedule.CancelAt}
+	return r.runWithPolicy(ctx, spec, policy, false)
+}
+
+func (r Runner) MinimizeSchedule(ctx context.Context, spec campaign.Campaign, schedule explorer.Schedule, target signature.Signature, config minimize.Config) (minimize.Result, error) {
+	return minimize.Minimize(ctx, schedule, target, config, func(candidateContext context.Context, candidate explorer.Schedule) ([]signature.Signature, error) {
+		result, err := r.RunSchedule(candidateContext, spec, candidate)
+		if err != nil {
+			return nil, err
+		}
+		return result.Signatures, nil
+	})
 }
 
 func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, policy scheduler.Policy, discovery bool) (Result, error) {
