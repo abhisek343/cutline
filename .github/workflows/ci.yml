@@ -59,3 +59,20 @@ jobs:
 
       - name: Test PostgreSQL schema
         run: go test -tags=integration ./internal/ledger -run TestPostgresSchemaConstraintsAndFreeze -count=1 -timeout=5m
+
+  integration-temporal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test live Temporal history ingestion
+        run: bash test/temporal/run-integration.sh
