@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS cutline_schema_migrations (
 );
 
 CREATE TABLE campaigns (
-    digest CHAR(64) PRIMARY KEY CHECK (digest ~ '^[0-9a-f]{64}$'),
+    digest TEXT PRIMARY KEY CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     api_version TEXT NOT NULL,
     name TEXT NOT NULL,
     specification JSONB NOT NULL CHECK (jsonb_typeof(specification) = 'object'),
@@ -13,7 +13,7 @@ CREATE TABLE campaigns (
 );
 
 CREATE TABLE target_builds (
-    digest CHAR(64) PRIMARY KEY CHECK (digest ~ '^[0-9a-f]{64}$'),
+    digest TEXT PRIMARY KEY CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     adapter TEXT NOT NULL,
     adapter_version TEXT NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object'),
@@ -22,8 +22,8 @@ CREATE TABLE target_builds (
 
 CREATE TABLE runs (
     run_id TEXT PRIMARY KEY CHECK (run_id ~ '^run_[0-9a-f]{32}$'),
-    campaign_digest CHAR(64) NOT NULL REFERENCES campaigns(digest),
-    target_digest CHAR(64) NOT NULL REFERENCES target_builds(digest),
+    campaign_digest TEXT NOT NULL REFERENCES campaigns(digest),
+    target_digest TEXT NOT NULL REFERENCES target_builds(digest),
     seed BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
@@ -136,6 +136,7 @@ CREATE TABLE resources (
     resource_id TEXT NOT NULL CHECK (resource_id ~ '^resource_[0-9a-f]{32}$'),
     owner_task_id TEXT NOT NULL,
     kind TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
     current_state TEXT NOT NULL DEFAULT 'acquired'
         CHECK (current_state IN ('acquired', 'released', 'expired')),
     acquired_order BIGINT NOT NULL CHECK (acquired_order > 0),
@@ -328,6 +329,24 @@ BEGIN
 END
 $$;
 
+CREATE OR REPLACE FUNCTION cutline_guard_derived_write()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM run_attempts
+        WHERE run_id = NEW.run_id AND attempt_id = NEW.attempt_id AND state = 'frozen'
+    ) THEN
+        RAISE EXCEPTION 'derived evidence requires a frozen attempt' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION cutline_validate_effect_transition()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -385,6 +404,10 @@ FOR EACH ROW EXECUTE FUNCTION cutline_guard_append_only();
 CREATE TRIGGER incomplete_reasons_append_only
 BEFORE INSERT OR UPDATE OR DELETE ON evidence_incomplete_reasons
 FOR EACH ROW EXECUTE FUNCTION cutline_guard_append_only();
+
+CREATE TRIGGER causal_edges_frozen_append_only
+BEFORE INSERT OR UPDATE OR DELETE ON causal_edges
+FOR EACH ROW EXECUTE FUNCTION cutline_guard_derived_write();
 
 CREATE TRIGGER validate_effect_transition
 BEFORE INSERT ON effect_transitions

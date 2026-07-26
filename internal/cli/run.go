@@ -36,7 +36,11 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve current working directory: %w", err)
 			}
-			result, err := (native.Runner{BaseDirectory: baseDirectory}).Run(cmd.Context(), spec)
+			runner, err := runnerForCampaign(spec, baseDirectory)
+			if err != nil {
+				return err
+			}
+			result, err := runner.Run(cmd.Context(), spec)
 			if err != nil {
 				return err
 			}

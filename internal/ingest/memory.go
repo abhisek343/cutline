@@ -24,6 +24,16 @@ type Snapshot struct {
 	IncompleteReasons []string        `json:"incompleteReasons"`
 }
 
+// Store is the append-only evidence boundary used by native and durable runs.
+// Implementations must make Freeze terminal: after it returns, no evidence or
+// incompleteness marker can be added.
+type Store interface {
+	Append(model.Event) (model.Event, error)
+	MarkIncomplete(string) error
+	Current() ([]model.Event, error)
+	Freeze() (Snapshot, error)
+}
+
 func (s Snapshot) Complete() bool {
 	return len(s.IncompleteReasons) == 0
 }
@@ -82,13 +92,14 @@ func (m *Memory) Append(event model.Event) (model.Event, error) {
 	return event, nil
 }
 
-func (m *Memory) MarkIncomplete(reason string) {
+func (m *Memory) MarkIncomplete(reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.frozen {
-		return
+		return ErrFrozen
 	}
 	m.markIncompleteLocked(reason)
+	return nil
 }
 
 func (m *Memory) markIncompleteLocked(reason string) {
@@ -100,7 +111,7 @@ func (m *Memory) markIncompleteLocked(reason string) {
 	m.incomplete = append(m.incomplete, reason)
 }
 
-func (m *Memory) Freeze() Snapshot {
+func (m *Memory) Freeze() (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.frozen = true
@@ -109,13 +120,13 @@ func (m *Memory) Freeze() Snapshot {
 		AttemptID:         m.attemptID,
 		Events:            cloneEvents(m.events),
 		IncompleteReasons: append([]string(nil), m.incomplete...),
-	}
+	}, nil
 }
 
-func (m *Memory) Current() []model.Event {
+func (m *Memory) Current() ([]model.Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return cloneEvents(m.events)
+	return cloneEvents(m.events), nil
 }
 
 func cloneEvents(events []model.Event) []model.Event {

@@ -5,29 +5,33 @@ import (
 	"regexp"
 
 	"github.com/abhisek343/cutline/internal/campaign"
-	"github.com/abhisek343/cutline/internal/fixtureledger"
-	"github.com/abhisek343/cutline/internal/ingest"
+	"github.com/abhisek343/cutline/internal/evidence"
 	"github.com/abhisek343/cutline/internal/model"
 )
 
 var noEffectExpression = regexp.MustCompile(`^builtin\.no_effect_after_cancel_observed\("([A-Za-z0-9._:/-]+)"\)$`)
 
-// EvaluateBuiltins is the milestone-one contract evaluator. It intentionally
-// accepts only an explicit built-in selector; arbitrary CEL is invalid until the
-// CEL environment is introduced.
-func EvaluateBuiltins(snapshot ingest.Snapshot, records []fixtureledger.Record, specs []campaign.ContractSpec) []Result {
+// EvaluateBuiltins is retained as a small, typed compatibility evaluator while
+// the full CEL engine is introduced in slice 14.
+func EvaluateBuiltins(view evidence.View, specs []campaign.ContractSpec) []Result {
 	results := make([]Result, 0, len(specs))
 	for _, spec := range specs {
-		results = append(results, evaluateBuiltin(snapshot, records, spec))
+		results = append(results, evaluateBuiltin(view, spec))
 	}
 	return results
 }
 
-func evaluateBuiltin(snapshot ingest.Snapshot, records []fixtureledger.Record, spec campaign.ContractSpec) Result {
+func evaluateBuiltin(view evidence.View, spec campaign.ContractSpec) Result {
 	result := Result{Contract: spec.Name}
-	if !snapshot.Complete() {
+	if !view.Complete() {
 		result.Status = StatusInconclusive
-		result.Message = "evidence is incomplete: " + snapshot.IncompleteReasons[0]
+		if len(view.Issues) > 0 {
+			result.Message = "evidence is inconsistent: " + view.Issues[0].Message
+		} else if len(view.IncompleteReasons) > 0 {
+			result.Message = "evidence is incomplete: " + view.IncompleteReasons[0]
+		} else {
+			result.Message = "evidence is incomplete"
+		}
 		return result
 	}
 	match := noEffectExpression.FindStringSubmatch(spec.Expression)
@@ -39,13 +43,9 @@ func evaluateBuiltin(snapshot ingest.Snapshot, records []fixtureledger.Record, s
 	effectKind := match[1]
 
 	var observedOrder uint64
-	commits := make(map[string]model.Event)
-	for _, event := range snapshot.Events {
-		if event.Type == model.EventCancelObserved && observedOrder == 0 {
-			observedOrder = event.CanonicalOrder
-		}
-		if event.Type == model.EventEffectCommitted && event.Attributes["kind"] == effectKind {
-			commits[event.EntityID] = event
+	for _, cancellation := range view.Cancellations {
+		if cancellation.ObservedOrder > 0 && (observedOrder == 0 || cancellation.ObservedOrder < observedOrder) {
+			observedOrder = cancellation.ObservedOrder
 		}
 	}
 	if observedOrder == 0 {
@@ -54,33 +54,16 @@ func evaluateBuiltin(snapshot ingest.Snapshot, records []fixtureledger.Record, s
 		return result
 	}
 
-	authoritative := make(map[string]fixtureledger.Record)
-	for _, record := range records {
-		if record.Kind == effectKind {
-			authoritative[record.EffectID] = record
-		}
-	}
-	for effectID, event := range commits {
-		if event.CanonicalOrder <= observedOrder {
+	for _, effect := range view.Effects {
+		if effect.Kind != effectKind || effect.State != model.EffectCommitted {
 			continue
 		}
-		if _, ok := authoritative[effectID]; !ok {
-			result.Status = StatusInconclusive
-			result.Message = fmt.Sprintf("effect %s claims commitment without authoritative fixture evidence", effectID)
-			return result
-		}
-		result.Status = StatusViolation
-		result.Message = fmt.Sprintf("%s committed after cancellation was observed", effectKind)
-		result.OffendingEffectID = effectID
-		result.BoundaryOrder = observedOrder
-		result.EffectOrder = event.CanonicalOrder
-		return result
-	}
-
-	for effectID := range authoritative {
-		if _, ok := commits[effectID]; !ok {
-			result.Status = StatusInconclusive
-			result.Message = fmt.Sprintf("authoritative effect %s has no matching SDK commitment event", effectID)
+		if effect.CommitOrder > observedOrder {
+			result.Status = StatusViolation
+			result.Message = fmt.Sprintf("%s committed after cancellation was observed", effectKind)
+			result.OffendingEffectID = effect.ID
+			result.BoundaryOrder = observedOrder
+			result.EffectOrder = effect.CommitOrder
 			return result
 		}
 	}

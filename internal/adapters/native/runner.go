@@ -18,8 +18,10 @@ import (
 	"github.com/abhisek343/cutline/internal/campaign"
 	"github.com/abhisek343/cutline/internal/contracts"
 	"github.com/abhisek343/cutline/internal/control"
+	"github.com/abhisek343/cutline/internal/evidence"
 	"github.com/abhisek343/cutline/internal/fixtureledger"
 	"github.com/abhisek343/cutline/internal/ingest"
+	"github.com/abhisek343/cutline/internal/ledger"
 	"github.com/abhisek343/cutline/internal/model"
 	"github.com/abhisek343/cutline/internal/scheduler"
 )
@@ -49,6 +51,7 @@ type Result struct {
 	Status      OverallStatus          `json:"status"`
 	Evaluations []contracts.Result     `json:"evaluations"`
 	Evidence    ingest.Snapshot        `json:"evidence"`
+	View        evidence.View          `json:"view"`
 	Effects     []fixtureledger.Record `json:"effects"`
 	Stdout      string                 `json:"stdout,omitempty"`
 	Stderr      string                 `json:"stderr,omitempty"`
@@ -59,6 +62,7 @@ type Result struct {
 type Runner struct {
 	BaseDirectory string
 	TempDirectory string
+	StoreFactory  func(context.Context, model.RunID, model.AttemptID, int) (ingest.Store, error)
 }
 
 func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error) {
@@ -99,7 +103,16 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 
 	socketPath := filepath.Join(runDir, "control.sock")
 	ledgerPath := filepath.Join(runDir, "fixture-effects.jsonl")
-	store := ingest.NewMemory(runID, attemptID, maxEvents)
+	var store ingest.Store = ingest.NewMemory(runID, attemptID, maxEvents)
+	if r.StoreFactory != nil {
+		store, err = r.StoreFactory(ctx, runID, attemptID, maxEvents)
+		if err != nil {
+			return Result{}, fmt.Errorf("create evidence store: %w", err)
+		}
+	}
+	if closer, ok := store.(interface{ Close() }); ok {
+		defer closer.Close()
+	}
 	singleCut, err := scheduler.NewSingleCut(spec.Exploration.CancelAt[0])
 	if err != nil {
 		return Result{}, err
@@ -171,16 +184,33 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 		store.MarkIncomplete("fixture ledger: " + ledgerErr.Error())
 		records = nil
 	}
+	authoritativeComplete := ledgerErr == nil
+	if derived, ok := store.(ledger.DerivedStore); ok {
+		if err := derived.RecordAuthoritativeEffects(records); err != nil {
+			_ = store.MarkIncomplete("persist authoritative effects: " + err.Error())
+			authoritativeComplete = false
+		}
+	}
 	markMissingTerminalEvidence(store)
-	snapshot := store.Freeze()
-	evaluations := contracts.EvaluateBuiltins(snapshot, records, spec.Contracts)
+	snapshot, freezeErr := store.Freeze()
+	if freezeErr != nil {
+		return Result{}, fmt.Errorf("freeze evidence: %w", freezeErr)
+	}
+	view := evidence.Build(evidence.BuildInput{Snapshot: snapshot, AuthoritativeEffects: records, AuthoritativeEffectsComplete: authoritativeComplete})
+	if derived, ok := store.(ledger.DerivedStore); ok {
+		if err := derived.PersistGraph(view.Edges); err != nil {
+			view.Issues = append(view.Issues, evidence.Issue{Code: "graph_persist", Message: err.Error()})
+		}
+	}
+	evaluations := contracts.EvaluateBuiltins(view, spec.Contracts)
 
 	result := Result{
 		RunID:       runID,
 		AttemptID:   attemptID,
-		Status:      overallStatus(snapshot, evaluations),
+		Status:      overallStatus(view, evaluations),
 		Evaluations: evaluations,
 		Evidence:    snapshot,
+		View:        view,
 		Effects:     records,
 		Stdout:      stdout.String(),
 		Stderr:      stderr.String(),
@@ -243,8 +273,12 @@ func targetEnvironment(extra map[string]string) []string {
 	return environment
 }
 
-func markMissingTerminalEvidence(store *ingest.Memory) {
-	events := store.Current()
+func markMissingTerminalEvidence(store ingest.Store) {
+	events, err := store.Current()
+	if err != nil {
+		_ = store.MarkIncomplete("read current evidence: " + err.Error())
+		return
+	}
 	required := map[model.EventType]bool{
 		model.EventCancelObserved: false,
 		model.EventTargetReturned: false,
@@ -263,8 +297,8 @@ func markMissingTerminalEvidence(store *ingest.Memory) {
 	}
 }
 
-func overallStatus(snapshot ingest.Snapshot, evaluations []contracts.Result) OverallStatus {
-	if !snapshot.Complete() {
+func overallStatus(view evidence.View, evaluations []contracts.Result) OverallStatus {
+	if !view.Complete() {
 		return OverallInconclusive
 	}
 	status := OverallPass
