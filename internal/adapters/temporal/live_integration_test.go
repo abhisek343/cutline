@@ -21,9 +21,8 @@ func TestLiveFetchReadsCanceledWorkflowFromTemporalServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(api.Close)
-	w := worker.New(api, taskQueue, worker.Options{})
-	w.RegisterWorkflow(liveCancellationWorkflow)
-	if err := w.Start(); err != nil {
+	w, err := startLiveWorker(ctx, api, taskQueue)
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(w.Stop)
@@ -68,6 +67,22 @@ func startLiveWorkflow(ctx context.Context, api client.Client, workflowID, taskQ
 		select {
 		case <-ctx.Done():
 			return nil, err
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func startLiveWorker(ctx context.Context, api client.Client, taskQueue string) (worker.Worker, error) {
+	for {
+		w := worker.New(api, taskQueue, worker.Options{})
+		w.RegisterWorkflow(liveCancellationWorkflow)
+		if err := w.Start(); err == nil {
+			return w, nil
+		}
+		w.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
