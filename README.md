@@ -89,7 +89,7 @@ The intended CLI flow is:
 ```text
 cutline doctor
 cutline run --campaign cutline.yaml
-cutline minimize <run-id>
+cutline minimize --campaign cutline.yaml --output capsules/checkout-cancel
 cutline replay capsules/<failure-id>
 cutline report <run-id> --format html
 ```
