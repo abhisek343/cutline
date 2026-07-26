@@ -71,6 +71,9 @@ func newRunCommand() *cobra.Command {
 					for _, evaluation := range schedule.Evaluations {
 						fmt.Fprintf(cmd.OutOrStdout(), "    contract %s: %s — %s\n", evaluation.Contract, evaluation.Status, evaluation.Message)
 					}
+					for _, value := range schedule.Signatures {
+						fmt.Fprintf(cmd.OutOrStdout(), "    failure signature: %s (%s)\n", value.Digest, value.ViolationClass)
+					}
 				}
 				if len(result.Plan.Unreachable) > 0 {
 					fmt.Fprintf(cmd.OutOrStdout(), "  unreachable checkpoints: %s\n", strings.Join(result.Plan.Unreachable, ", "))

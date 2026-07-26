@@ -47,6 +47,12 @@ func TestRunnerFaultyAndCleanCheckout(t *testing.T) {
 			if len(result.Effects) != tt.wantEffects {
 				t.Fatalf("effects = %d, want %d", len(result.Effects), tt.wantEffects)
 			}
+			if tt.wantStatus == OverallViolation && len(result.Signatures) != 1 {
+				t.Fatalf("signatures = %#v", result.Signatures)
+			}
+			if tt.wantStatus == OverallPass && len(result.Signatures) != 0 {
+				t.Fatalf("passing run has signatures = %#v", result.Signatures)
+			}
 			if !result.Evidence.Complete() {
 				t.Fatalf("evidence incomplete: %v", result.Evidence.IncompleteReasons)
 			}

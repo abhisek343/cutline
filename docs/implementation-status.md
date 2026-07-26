@@ -23,7 +23,7 @@ because the local environment has no Docker provider.
 | 14 | CEL contract engine | Complete |
 | 15 | Checkpoint discovery and single-cut enumeration | Complete |
 | 16 | Boundary-pair and bounded-prefix search | Complete |
-| 17 | Stable failure signatures | Planned |
+| 17 | Stable failure signatures | Complete |
 | 18 | Failure minimizer | Planned |
 | 19 | Failure-capsule builder | Planned |
 | 20 | Replay engine | Planned |

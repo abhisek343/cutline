@@ -20,8 +20,8 @@ Cutline is under active implementation. The deterministic model, campaign CLI,
 native Go SDK/control path, PostgreSQL evidence ledger, typed causal view,
 checkpoint discovery, bounded single-cut enumeration, boundary-pair and
 bounded-prefix exploration, typed CEL contracts, and the faulty/correct checkout
-benchmark are runnable. Capsules, reports, and Temporal support are being
-delivered next.
+benchmark are runnable, with stable failure signatures attached to violations.
+Capsules, reports, and Temporal support are being delivered next.
 
 ## What a test looks like
 

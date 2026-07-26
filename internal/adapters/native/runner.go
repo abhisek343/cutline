@@ -25,6 +25,7 @@ import (
 	"github.com/abhisek343/cutline/internal/ledger"
 	"github.com/abhisek343/cutline/internal/model"
 	"github.com/abhisek343/cutline/internal/scheduler"
+	"github.com/abhisek343/cutline/internal/signature"
 )
 
 const (
@@ -51,6 +52,7 @@ type Result struct {
 	AttemptID   model.AttemptID        `json:"attemptId"`
 	Status      OverallStatus          `json:"status"`
 	Evaluations []contracts.Result     `json:"evaluations"`
+	Signatures  []signature.Signature  `json:"signatures,omitempty"`
 	Evidence    ingest.Snapshot        `json:"evidence"`
 	View        evidence.View          `json:"view"`
 	Effects     []fixtureledger.Record `json:"effects"`
@@ -67,10 +69,11 @@ type Runner struct {
 }
 
 type CampaignResult struct {
-	Status    OverallStatus `json:"status"`
-	Discovery Result        `json:"discovery"`
-	Plan      explorer.Plan `json:"plan"`
-	Schedules []Result      `json:"schedules"`
+	Status     OverallStatus         `json:"status"`
+	Discovery  Result                `json:"discovery"`
+	Plan       explorer.Plan         `json:"plan"`
+	Schedules  []Result              `json:"schedules"`
+	Signatures []signature.Signature `json:"signatures,omitempty"`
 }
 
 func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error) {
@@ -129,6 +132,7 @@ func (r Runner) RunCampaign(ctx context.Context, spec campaign.Campaign) (Campai
 		result.Schedules = append(result.Schedules, scheduleResult)
 	}
 	result.Status = overallCampaignStatus(plan, result.Schedules)
+	result.Signatures = uniqueSignatures(result.Schedules)
 	return result, nil
 }
 
@@ -276,12 +280,24 @@ func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, polic
 	if !discovery {
 		evaluations = contracts.Evaluate(view, spec.Contracts)
 	}
+	signatures := []signature.Signature{}
+	if !discovery {
+		var signatureErr error
+		signatures, signatureErr = signature.BuildAll(view, spec.Contracts, evaluations, signature.BuildContext{
+			AdapterMajorVersion: "native/" + spec.Target.Adapter + "/1",
+			SchemaMajorVersion:  model.EventSchemaVersion,
+		})
+		if signatureErr != nil {
+			return Result{}, fmt.Errorf("build failure signature: %w", signatureErr)
+		}
+	}
 
 	result := Result{
 		RunID:       runID,
 		AttemptID:   attemptID,
 		Status:      overallStatus(view, evaluations),
 		Evaluations: evaluations,
+		Signatures:  signatures,
 		Evidence:    snapshot,
 		View:        view,
 		Effects:     records,
@@ -396,6 +412,21 @@ func overallCampaignStatus(plan explorer.Plan, schedules []Result) OverallStatus
 		return OverallViolation
 	}
 	return OverallPass
+}
+
+func uniqueSignatures(schedules []Result) []signature.Signature {
+	result := make([]signature.Signature, 0)
+	seen := make(map[string]struct{})
+	for _, schedule := range schedules {
+		for _, value := range schedule.Signatures {
+			if _, ok := seen[value.Digest]; ok {
+				continue
+			}
+			seen[value.Digest] = struct{}{}
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func overallStatus(view evidence.View, evaluations []contracts.Result) OverallStatus {

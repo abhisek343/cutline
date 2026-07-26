@@ -121,6 +121,11 @@ Cutline defaults, decide which outcomes are permitted.
 - confirm minimized candidates repeatedly;
 - distinguish target bugs from harness failures.
 
+Cutline v1 failure signatures normalize the contract name and version, failure
+class, primary entity kind, cancellation trigger, causal-path shape, and
+adapter/schema major versions. Run IDs, timestamps, generated entity IDs, and
+incidental target output are intentionally excluded.
+
 ## False-negative controls
 
 - incomplete evidence never passes;
