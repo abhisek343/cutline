@@ -115,8 +115,8 @@ resources
   .all(r, r.isReleasedAt(run.drainedAt) || r.expiredSafely())
 ```
 
-The exact CEL helper syntax is provisional until the environment is implemented
-and versioned. Examples define intent, not a commitment to an untested API.
+The version 1 environment supports the helper forms shown above. The evaluator
+rejects unsupported environment versions and runs only against frozen evidence.
 
 ## Contract declaration
 

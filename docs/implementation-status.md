@@ -20,7 +20,7 @@ because the local environment has no Docker provider.
 | 11 | PostgreSQL schema and migration guardrails | Complete; CI integration required |
 | 12 | Durable evidence ingestion and freeze | Complete; CI integration required |
 | 13 | Causal graph and effect reconciliation | Complete; CI integration required |
-| 14 | CEL contract engine | In progress |
+| 14 | CEL contract engine | Complete |
 | 15 | Checkpoint discovery and single-cut enumeration | Planned |
 | 16 | Boundary-pair and bounded-prefix search | Planned |
 | 17 | Stable failure signatures | Planned |

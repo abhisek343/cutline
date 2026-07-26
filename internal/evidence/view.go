@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/abhisek343/cutline/internal/fixtureledger"
 	"github.com/abhisek343/cutline/internal/ingest"
@@ -106,6 +107,56 @@ func (v View) Complete() bool {
 
 func (v View) HasCapability(capability string) bool {
 	return slices.Contains(v.Capabilities, capability)
+}
+
+// BoundaryOrder returns the first canonical order for a named contract
+// boundary. It deliberately does not infer an absent observation.
+func (v View) BoundaryOrder(boundary string) (uint64, bool) {
+	var wanted model.EventType
+	switch boundary {
+	case "cancellation-requested":
+		wanted = model.EventCancelRequested
+	case "cancellation-delivered":
+		wanted = model.EventCancelDelivered
+	case "cancellation-observed":
+		wanted = model.EventCancelObserved
+	case "target-returned":
+		wanted = model.EventTargetReturned
+	case "run-drained":
+		wanted = model.EventDrainCompleted
+	default:
+		return 0, false
+	}
+	for _, event := range v.Events {
+		if event.Type == wanted && event.CanonicalOrder > 0 {
+			return event.CanonicalOrder, true
+		}
+	}
+	return 0, false
+}
+
+func (v View) BoundaryTime(boundary string) (time.Time, bool) {
+	var wanted model.EventType
+	switch boundary {
+	case "cancellation-requested":
+		wanted = model.EventCancelRequested
+	case "cancellation-delivered":
+		wanted = model.EventCancelDelivered
+	case "cancellation-observed":
+		wanted = model.EventCancelObserved
+	case "target-returned":
+		wanted = model.EventTargetReturned
+	case "run-drained":
+		wanted = model.EventDrainCompleted
+	default:
+		return time.Time{}, false
+	}
+	for _, event := range v.Events {
+		if event.Type == wanted && !event.ObservedAt.IsZero() {
+			return event.ObservedAt, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func Build(input BuildInput) View {

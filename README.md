@@ -18,8 +18,9 @@ small, deterministic counterexamples.
 
 Cutline is under active implementation. The deterministic model, campaign CLI,
 native Go SDK/control path, PostgreSQL evidence ledger, typed causal view,
-single-cut scheduler, and faulty/correct checkout benchmark are runnable. CEL,
-exploration, capsules, reports, and Temporal support are being delivered next.
+single-cut scheduler, typed CEL contracts, and faulty/correct checkout benchmark
+are runnable. Broader exploration, capsules, reports, and Temporal support are
+being delivered next.
 
 ## What a test looks like
 

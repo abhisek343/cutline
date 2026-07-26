@@ -202,7 +202,7 @@ func (r Runner) Run(ctx context.Context, spec campaign.Campaign) (Result, error)
 			view.Issues = append(view.Issues, evidence.Issue{Code: "graph_persist", Message: err.Error()})
 		}
 	}
-	evaluations := contracts.EvaluateBuiltins(view, spec.Contracts)
+	evaluations := contracts.Evaluate(view, spec.Contracts)
 
 	result := Result{
 		RunID:       runID,
