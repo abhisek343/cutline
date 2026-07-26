@@ -23,8 +23,9 @@ bounded-prefix exploration, typed CEL contracts, and the faulty/correct checkout
 benchmark are runnable, with stable failure signatures attached to violations
 and a bounded deterministic minimizer that preserves those signatures. Stable
 violations can now be packaged as checksummed, redaction-aware failure capsules
-and replayed with exact-signature comparison. Reports and Temporal support are
-being delivered next.
+and replayed with exact-signature comparison. Those capsules also render as
+escaped static HTML or machine-readable JSON reports. Temporal support is being
+delivered next.
 
 ## What a test looks like
 

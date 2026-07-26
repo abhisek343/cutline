@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/abhisek343/cutline/internal/minimize"
 	"github.com/abhisek343/cutline/internal/model"
 	"github.com/abhisek343/cutline/internal/replay"
+	"github.com/abhisek343/cutline/internal/report"
 )
 
 func TestRunnerFaultyAndCleanCheckout(t *testing.T) {
@@ -200,6 +202,9 @@ func TestRunnerMinimizesNativeFailureSignature(t *testing.T) {
 	replayed, err := runner.ReplayCapsule(ctx, directory, replay.Config{})
 	if err != nil || replayed.Status != replay.StatusReproduced || !replayed.Exact {
 		t.Fatalf("replay result=%#v error=%v", replayed, err)
+	}
+	if rendered, err := report.Render(directory, "html"); err != nil || !strings.Contains(string(rendered), "Cutline static report") {
+		t.Fatalf("report render error=%v output=%s", err, rendered)
 	}
 }
 

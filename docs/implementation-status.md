@@ -27,7 +27,7 @@ because the local environment has no Docker provider.
 | 18 | Failure minimizer | Complete |
 | 19 | Failure-capsule builder | Complete |
 | 20 | Replay engine | Complete |
-| 21 | Static report | Planned |
+| 21 | Static report | Complete |
 | 22 | Temporal workflow adapter | Planned |
 | 23 | Temporal activity adapter | Planned |
 | 24 | Benchmark and release gate | Planned |
@@ -51,3 +51,7 @@ schema versions.
 Slice 20 validates capsules before reading any executable input, checks target
 compatibility, executes the minimized schedule through the native runner, and
 labels exact, comparative, different-signature, and non-reproduced outcomes.
+
+Slice 21 renders validated capsule data as JSON or escaped standalone HTML.
+The report command never executes the target and refuses to overwrite an
+existing output file.
