@@ -15,3 +15,16 @@ func TestValidateLocalPostgresDSN(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateLocalTemporalAddress(t *testing.T) {
+	for address, want := range map[string]bool{
+		"127.0.0.1:7233":        true,
+		"localhost:7233":        true,
+		"[::1]:7233":            true,
+		"temporal.example:7233": false,
+	} {
+		if got := validateLocalTemporalAddress(address) == nil; got != want {
+			t.Errorf("validateLocalTemporalAddress(%q) = %t, want %t", address, got, want)
+		}
+	}
+}

@@ -17,8 +17,8 @@ The checkout fixture is the reference demonstration. The faulty version produces
 
 The Temporal adapter has been verified against a local server. It reads completed workflow and activity history through the Go SDK and translates it to canonical events. Unsupported history and external effect outcomes that cannot be verified are kept incomplete or unknown.
 
-It does not yet control checkpoints in arbitrary Temporal workers. That needs a worker instrumentation protocol and a local campaign runner; see the [roadmap](roadmap.md).
+Temporal campaigns control checkpoints in command-launched local workers. Remote workers and remote Temporal endpoints remain out of scope; see the [roadmap](roadmap.md).
 
 ## Verification
 
-`make check` covers formatting, vet, unit tests, and the race detector. PostgreSQL and Temporal container tests run in CI and can be run locally with Docker. `make release` adds the line budget, reference benchmark, and production build.
+`make check` covers formatting, vet, unit tests, and the race detector. PostgreSQL and Temporal container tests run in CI and can be run locally with Docker. `make release` adds the reference benchmark and production build.

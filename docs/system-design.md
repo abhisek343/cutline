@@ -26,7 +26,7 @@ Effect evidence must identify its source. A committed external effect is authori
 
 ## Temporal boundary
 
-The Temporal adapter uses the Go SDK against loopback endpoints to read a completed execution's history. It translates workflow and activity lifecycle facts but does not infer external effect commitments. The adapter is intentionally read-only until worker instrumentation and campaign control are added.
+The Temporal adapter runs a command-launched local worker for each campaign schedule. Its activities report through Cutline's private control endpoint and use the local SDK to cancel the workflow when Cutline injects cancellation. The history reader remains available for inspection. External effect commitments still require worker-provided authoritative evidence.
 
 ## Failure handling
 

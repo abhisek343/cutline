@@ -41,7 +41,7 @@ The scheduler controls only declared checkpoint releases. It does not control th
 
 The Temporal adapter reads completed history from a local, loopback Temporal server and translates workflow and activity lifecycle events into the same model. It keeps unsupported history and unknown external effect outcomes explicit rather than guessing a result.
 
-Temporal history ingestion is read-only. Worker instrumentation and campaign-driven checkpoint control are not implemented yet.
+Temporal campaigns launch a local instrumented worker command for every schedule. Activities use the same Cutline checkpoint protocol as native targets and request workflow cancellation through the local Temporal SDK.
 
 ## Ownership and ordering
 

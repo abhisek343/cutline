@@ -58,7 +58,6 @@ Add an ADR when a change:
 - adds a runtime adapter or external infrastructure dependency;
 - changes deterministic ordering or failure-signature rules;
 - introduces a new process or service boundary;
-- materially changes the line budget.
 
 Use the template in [docs/adr/README.md](docs/adr/README.md).
 

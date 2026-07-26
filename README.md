@@ -104,7 +104,7 @@ A capsule contains the minimized release schedule, canonical events, derived eff
 cutline temporal inspect --workflow-id example --namespace default
 ```
 
-The command accepts loopback endpoints only. It is evidence ingestion, not yet a checkpoint-driven campaign runner for arbitrary Temporal workers. Temporal history also cannot by itself prove whether an external dependency committed an effect; workers must provide that evidence.
+The command accepts loopback endpoints only. Campaigns can also launch a local instrumented worker command per schedule; the worker receives the private Cutline control endpoint and local Temporal address through its environment. Temporal history alone still cannot prove an external dependency committed an effect; workers must provide that evidence.
 
 ## Development
 
@@ -112,14 +112,14 @@ The command accepts loopback endpoints only. It is evidence ingestion, not yet a
 make check                 # format, vet, unit tests, race detector
 make integration           # PostgreSQL integration tests (Docker required)
 make temporal-integration  # local Temporal integration test (Docker required)
-make release               # check, line budget, reference benchmark, build
+make release               # full local release checks and build
 ```
 
 For a local PostgreSQL instance, run `docker compose up -d postgres`. The database listens on `127.0.0.1:54329`.
 
 ## Project status
 
-The native Go workflow is complete: discovery, bounded exploration, contract evaluation, minimization, replay, and reporting all run against the reference fixture. PostgreSQL-backed evidence and local Temporal history ingestion are also implemented. The next Temporal increment is worker instrumentation and checkpoint-driven campaign execution.
+The native Go workflow is complete: discovery, bounded exploration, contract evaluation, minimization, replay, and reporting all run against the reference fixture. PostgreSQL-backed evidence and local Temporal history ingestion are also implemented. Temporal campaigns run command-launched local workers through the same checkpoint-driven execution loop as native targets.
 
 ## Documentation
 

@@ -1,0 +1,22 @@
+apiVersion: cutline.dev/v1alpha1
+kind: Campaign
+name: temporal-checkout-faulty
+target:
+  adapter: temporal
+  command: ["env", "CUTLINE_TEMPORAL_FIXTURE=faulty", "go", "test", "./test/fixtures/temporalcheckout", "-run", "TestCheckout", "-count=1"]
+  temporal:
+    address: 127.0.0.1:7233
+    namespace: default
+exploration:
+  strategy: checkpoint
+  maxSchedules: 8
+  scheduleTimeout: 45s
+  drainTimeout: 10s
+contracts:
+  - name: no-charge-after-cancel
+    severity: critical
+    boundary: cancellation-observed
+    expression: >
+      !effects.exists(e,
+        e.kind == "payment.charge" && e.committed &&
+        e.startedAfter(cancel.observedAt))

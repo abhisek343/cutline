@@ -16,9 +16,15 @@ type Campaign struct {
 }
 
 type TargetSpec struct {
-	Adapter          string   `yaml:"adapter" json:"adapter"`
-	Command          []string `yaml:"command" json:"command"`
-	WorkingDirectory string   `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
+	Adapter          string             `yaml:"adapter" json:"adapter"`
+	Command          []string           `yaml:"command" json:"command"`
+	WorkingDirectory string             `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
+	Temporal         TemporalTargetSpec `yaml:"temporal,omitempty" json:"temporal,omitempty"`
+}
+
+type TemporalTargetSpec struct {
+	Address   string `yaml:"address,omitempty" json:"address,omitempty"`
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 }
 
 type ExplorationSpec struct {

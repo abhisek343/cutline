@@ -15,7 +15,7 @@ The useful output is not a generic race warning. It is a small schedule, a named
 
 ## Supported scope
 
-The native Go adapter supports checkpoint discovery, bounded exploration, evidence collection, CEL contracts, minimization, replay, and static reporting. PostgreSQL can persist evidence. The Temporal adapter reads local completed history and translates it into the same evidence model.
+The native Go adapter supports checkpoint discovery, bounded exploration, evidence collection, CEL contracts, minimization, replay, and static reporting. PostgreSQL can persist evidence. The Temporal adapter runs local, command-launched workers through the same checkpoint protocol, cancellation schedules, contract evaluation, minimization, and replay path as native targets. It also reads local completed history and translates it into the same evidence model.
 
 ## Deliberate limits
 

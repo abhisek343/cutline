@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/abhisek343/cutline/internal/adapters/native"
+	"github.com/abhisek343/cutline/internal/adapters/temporal"
+	"github.com/abhisek343/cutline/internal/capsule"
 	"github.com/abhisek343/cutline/internal/replay"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +23,16 @@ func newReplayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := (native.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], replay.Config{})
+			manifest, err := capsule.ValidateDirectory(args[0])
+			if err != nil {
+				return err
+			}
+			var result replay.Result
+			if manifest.Adapter == "temporal" {
+				result, err = (temporal.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], replay.Config{})
+			} else {
+				result, err = (native.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], replay.Config{})
+			}
 			if err != nil {
 				return err
 			}

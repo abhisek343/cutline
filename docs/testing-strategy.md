@@ -9,7 +9,7 @@ make check
 make release
 ```
 
-`make check` runs formatting, vet, unit tests, and the race detector. `make release` also checks the line budget, runs the reference replay benchmark, and builds the CLI.
+`make check` runs formatting, vet, unit tests, and the race detector. `make release` runs the reference replay benchmark and builds the CLI.
 
 ## Integration checks
 

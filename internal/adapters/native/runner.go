@@ -66,9 +66,11 @@ type Result struct {
 }
 
 type Runner struct {
-	BaseDirectory string
-	TempDirectory string
-	StoreFactory  func(context.Context, model.RunID, model.AttemptID, int) (ingest.Store, error)
+	BaseDirectory  string
+	TempDirectory  string
+	Environment    map[string]string
+	AdapterVersion string
+	StoreFactory   func(context.Context, model.RunID, model.AttemptID, int) (ingest.Store, error)
 }
 
 type CampaignResult struct {
@@ -163,7 +165,7 @@ func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule,
 		Campaign: spec, RunID: result.RunID, AttemptID: result.AttemptID,
 		Execution: capsule.Execution{Status: string(result.Status), ExitCode: result.ExitCode, Duration: result.Duration},
 		Schedule:  schedule, Snapshot: result.Evidence, View: result.View, Effects: result.Effects,
-		Evaluations: result.Evaluations, Signatures: result.Signatures, FailureSignature: minimization.Target, Minimization: &minimization,
+		Evaluations: result.Evaluations, Signatures: result.Signatures, FailureSignature: minimization.Target, Minimization: &minimization, AdapterVersion: r.adapterVersion(spec),
 	}, destination)
 }
 
@@ -178,7 +180,7 @@ func (r Runner) ReplayCapsule(ctx context.Context, root string, config replay.Co
 }
 
 func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, policy scheduler.Policy, discovery bool) (Result, error) {
-	if spec.Target.Adapter != "go-test" && spec.Target.Adapter != "go-command" {
+	if spec.Target.Adapter != "go-test" && spec.Target.Adapter != "go-command" && spec.Target.Adapter != "temporal" {
 		return Result{}, ErrUnsupportedAdapter
 	}
 	if policy == nil {
@@ -269,6 +271,9 @@ func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, polic
 		"CUTLINE_SESSION_ID":     sessionValue,
 		"CUTLINE_FIXTURE_LEDGER": ledgerPath,
 	}
+	for key, value := range r.Environment {
+		targetExtra[key] = value
+	}
 	if discovery {
 		targetExtra["CUTLINE_DISCOVERY"] = "1"
 	}
@@ -325,7 +330,7 @@ func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, polic
 	if !discovery {
 		var signatureErr error
 		signatures, signatureErr = signature.BuildAll(view, spec.Contracts, evaluations, signature.BuildContext{
-			AdapterMajorVersion: "native/" + spec.Target.Adapter + "/1",
+			AdapterMajorVersion: r.adapterVersion(spec),
 			SchemaMajorVersion:  model.EventSchemaVersion,
 		})
 		if signatureErr != nil {
@@ -351,6 +356,13 @@ func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, polic
 		result.Status = OverallInconclusive
 	}
 	return result, nil
+}
+
+func (r Runner) adapterVersion(spec campaign.Campaign) string {
+	if r.AdapterVersion != "" {
+		return r.AdapterVersion
+	}
+	return "native/" + spec.Target.Adapter + "/1"
 }
 
 func (r Runner) resolveWorkingDirectory(relative string) (string, error) {
