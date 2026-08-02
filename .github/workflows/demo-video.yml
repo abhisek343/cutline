@@ -1,0 +1,89 @@
+name: Cloud demo video
+
+on:
+  push:
+    branches:
+      - codex/cloud-demo-recordings
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the reference scenarios
+        shell: bash
+        run: |
+          set +e
+          go run ./cmd/cutline run --campaign test/fixtures/checkout/campaign-faulty.yaml > /tmp/cutline-faulty.log 2>&1
+          faulty_status=$?
+          set -e
+          go run ./cmd/cutline run --campaign test/fixtures/checkout/campaign-clean.yaml > /tmp/cutline-clean.log 2>&1
+          {
+            echo "CUTLINE / CANCELLATION-SAFETY DEMO"
+            echo
+            echo "Cloud runner: GitHub Actions Ubuntu"
+            echo "Faulty fixture exit code: $faulty_status (expected: non-zero contract violation)"
+            echo
+            echo "Faulty campaign:"
+            tail -n 10 /tmp/cutline-faulty.log
+            echo
+            echo "Clean campaign:"
+            tail -n 10 /tmp/cutline-clean.log
+          } > /tmp/cutline-demo.txt
+          test "$faulty_status" -ne 0
+
+      - name: Install video tooling
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Render the demo video
+        run: |
+          mkdir -p docs/demo
+          ffmpeg -y -f lavfi -i color=c=0x111827:s=1280x720:r=25 \
+            -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf:textfile=/tmp/cutline-demo.txt:fontcolor=white:fontsize=22:line_spacing=10:x=40:y=40" \
+            -t 12 -an -c:v libx264 -pix_fmt yuv420p -movflags +faststart docs/demo/cutline-demo.mp4
+          ffmpeg -y -i docs/demo/cutline-demo.mp4 \
+            -vf "fps=8,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=sierra2" \
+            docs/demo/cutline-demo.gif
+
+      - name: Upload demo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cutline-cloud-demo
+          path: docs/demo
+
+      - name: Commit demo assets
+        shell: bash
+        run: |
+          mkdir -p /tmp/demo-assets
+          cp docs/demo/cutline-demo.mp4 /tmp/demo-assets/cutline-demo.mp4
+          cp docs/demo/cutline-demo.gif /tmp/demo-assets/cutline-demo.gif
+          rm -f docs/demo/cutline-demo.mp4
+          rm -f docs/demo/cutline-demo.gif
+          target_branch="$GITHUB_HEAD_REF"
+          if [ -z "$target_branch" ]; then target_branch="$GITHUB_REF_NAME"; fi
+          git fetch origin "$target_branch"
+          git checkout -B demo-assets "origin/$target_branch"
+          mkdir -p docs/demo
+          cp /tmp/demo-assets/cutline-demo.mp4 docs/demo/cutline-demo.mp4
+          cp /tmp/demo-assets/cutline-demo.gif docs/demo/cutline-demo.gif
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/demo/cutline-demo.mp4 docs/demo/cutline-demo.gif
+          git diff --cached --quiet || git commit -m "docs: add cloud demo recording [skip ci]"
+          git push origin "demo-assets:$target_branch"
