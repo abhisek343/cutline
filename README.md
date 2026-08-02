@@ -136,3 +136,17 @@ The native Go workflow is complete: discovery, bounded exploration, contract eva
 ## License
 
 Cutline is licensed under the [Apache License 2.0](LICENSE).
+
+## Cloud demo
+
+[![Cutline cloud demo](docs/demo/cutline-demo.gif)](docs/demo/cutline-demo.mp4)
+
+This recording is generated on a clean GitHub Actions Ubuntu runner. It executes the faulty checkout campaign, which should expose a cancellation-safety contract violation, and the clean campaign, which should pass.
+
+To reproduce locally:
+
+    go build -o ./bin/cutline ./cmd/cutline
+    ./bin/cutline run --campaign test/fixtures/checkout/campaign-faulty.yaml
+    ./bin/cutline run --campaign test/fixtures/checkout/campaign-clean.yaml
+
+The workflow is defined in .github/workflows/demo-video.yml. The recording is a deterministic CLI demonstration, not a claim that arbitrary concurrent programs are fully verified.
