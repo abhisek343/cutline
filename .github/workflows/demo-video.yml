@@ -73,6 +73,8 @@ jobs:
           mkdir -p /tmp/demo-assets
           cp docs/demo/cutline-demo.mp4 /tmp/demo-assets/cutline-demo.mp4
           cp docs/demo/cutline-demo.gif /tmp/demo-assets/cutline-demo.gif
+          rm -f docs/demo/cutline-demo.mp4
+          rm -f docs/demo/cutline-demo.gif
           target_branch="$GITHUB_HEAD_REF"
           if [ -z "$target_branch" ]; then target_branch="$GITHUB_REF_NAME"; fi
           git fetch origin "$target_branch"
