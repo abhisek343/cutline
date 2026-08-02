@@ -25,8 +25,11 @@ jobs:
 
       - name: Verify formatting
         run: |
-          gofmt -w .
-          git diff --exit-code
+          unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+          test -z "$unformatted" || {
+            printf 'gofmt required for:\n%s\n' "$unformatted" >&2
+            exit 1
+          }
 
       - name: Vet
         run: go vet ./...
@@ -40,6 +43,8 @@ jobs:
       - name: Build
         run: go build -trimpath -o /tmp/cutline ./cmd/cutline
 
+      - name: Package Linux release candidate
+        run: make package VERSION=v0.0.0-ci OUT_DIR=/tmp/cutline-dist
 
   integration-postgres:
     runs-on: ubuntu-latest

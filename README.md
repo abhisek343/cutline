@@ -109,13 +109,14 @@ The command accepts loopback endpoints only. Campaigns can also launch a local i
 ## Development
 
 ```sh
-make check                 # format, vet, unit tests, race detector
+make check                 # format verification, vet, unit tests, race detector
 make integration           # PostgreSQL integration tests (Docker required)
 make temporal-integration  # local Temporal integration test (Docker required)
-make release               # full local release checks and build
+make release               # complete local verification and production build
+make package VERSION=v0.1.0 OUT_DIR=/tmp/cutline-v0.1.0
 ```
 
-For a local PostgreSQL instance, run `docker compose up -d postgres`. The database listens on `127.0.0.1:54329`.
+For a local PostgreSQL instance, run `docker compose up -d postgres`. The database listens on `127.0.0.1:54329`. See [releasing](docs/releasing.md) for the release checklist and Linux archive layout.
 
 ## Project status
 
@@ -129,8 +130,9 @@ The native Go workflow is complete: discovery, bounded exploration, contract eva
 - [Failure capsules](docs/failure-capsules.md)
 - [Development guide](docs/development-workflow.md)
 - [Testing](docs/testing-strategy.md)
+- [Releasing](docs/releasing.md)
 - [Architecture decisions](docs/adr/README.md)
 
 ## License
 
-No license has been selected. Until one is added, the repository does not grant permission to redistribute or reuse the source.
+Cutline is licensed under the [Apache License 2.0](LICENSE).
