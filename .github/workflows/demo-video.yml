@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - codex/cloud-demo-recordings
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
