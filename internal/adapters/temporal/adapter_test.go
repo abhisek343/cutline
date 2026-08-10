@@ -19,9 +19,9 @@ func TestWorkflowAdapterTranslatesCancellationLifecycle(t *testing.T) {
 	history := WorkflowHistory{RunID: model.RunID(run), AttemptID: model.AttemptID(attempt), SessionID: model.SessionID(session), WorkflowID: "checkout", Events: []HistoryEvent{
 		{ID: "1", Type: "workflow.started", ObservedAt: base},
 		{ID: "2", Type: "workflow.checkpoint_reached", ObservedAt: base.Add(time.Second), Attributes: map[string]string{"point": "before-charge"}},
-		{ID: "3", Type: "workflow.cancel_requested", ObservedAt: base.Add(2 * time.Second)},
-		{ID: "4", Type: "workflow.cancel_delivered", ObservedAt: base.Add(3 * time.Second)},
-		{ID: "5", Type: "workflow.cancel_observed", ObservedAt: base.Add(4 * time.Second)},
+		{ID: "3", Type: "workflow.cancel_requested", ObservedAt: base.Add(2 * time.Second), Attributes: map[string]string{"cancellationId": "workflow-cancel"}},
+		{ID: "4", Type: "workflow.cancel_delivered", ObservedAt: base.Add(3 * time.Second), Attributes: map[string]string{"cancellationId": "workflow-cancel"}},
+		{ID: "5", Type: "workflow.cancel_observed", ObservedAt: base.Add(4 * time.Second), Attributes: map[string]string{"cancellationId": "workflow-cancel"}},
 		{ID: "6", Type: "workflow.completed", ObservedAt: base.Add(5 * time.Second)},
 	}}
 	snapshot, err := NewAdapter().TranslateWorkflow(history)
@@ -75,6 +75,10 @@ func TestActivityEffectHistoryRequiresKnownOutcome(t *testing.T) {
 	}
 	if _, err := EffectHistory(ActivityEffect{EffectID: "charge-1", Kind: "payment.charge", Outcome: "maybe", ObservedAt: time.Unix(1, 0).UTC()}); err == nil {
 		t.Fatal("EffectHistory accepted unknown outcome")
+	}
+	compensated, err := EffectHistory(ActivityEffect{EffectID: "charge-1", TaskID: "charge", Kind: "payment.charge", Outcome: "compensated", ObservedAt: time.Unix(1, 0).UTC()})
+	if err != nil || compensated.Type != "activity.effect_compensated" {
+		t.Fatalf("compensated history=%#v error=%v", compensated, err)
 	}
 }
 

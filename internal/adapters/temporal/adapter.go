@@ -3,6 +3,7 @@ package temporal
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,7 +75,7 @@ func EffectHistory(effect ActivityEffect) (HistoryEvent, error) {
 		return HistoryEvent{}, fmt.Errorf("activity effect requires effectId, kind, and observedAt")
 	}
 	outcome := strings.ToLower(strings.TrimSpace(effect.Outcome))
-	if outcome != "declared" && outcome != "attempted" && outcome != "committed" && outcome != "failed" && outcome != "unknown" {
+	if outcome != "declared" && outcome != "attempted" && outcome != "committed" && outcome != "failed" && outcome != "unknown" && outcome != "compensated" {
 		return HistoryEvent{}, fmt.Errorf("unsupported activity effect outcome %q", effect.Outcome)
 	}
 	return HistoryEvent{ID: effect.EffectID, Type: "activity.effect_" + outcome, ObservedAt: effect.ObservedAt, Attributes: map[string]string{"effectId": effect.EffectID, "taskId": effect.TaskID, "kind": effect.Kind}}, nil
@@ -89,25 +90,40 @@ func (a Adapter) Translate(input RunHistory) (ingest.Snapshot, error) {
 		event    HistoryEvent
 		activity bool
 		identity string
+		source   int
 		order    int
 	}
 	items := make([]item, 0, len(workflow.Events))
 	for index, event := range workflow.Events {
-		items = append(items, item{event: event, identity: workflow.WorkflowID, order: index})
+		items = append(items, item{event: event, identity: workflow.WorkflowID, source: 0, order: index})
 	}
-	for _, activity := range input.Activities {
+	for activityIndex, activity := range input.Activities {
 		if activity.RunID != workflow.RunID || activity.AttemptID != workflow.AttemptID {
 			return ingest.Snapshot{}, fmt.Errorf("activity history identity does not match workflow")
 		}
-		for index, event := range activity.Events {
-			items = append(items, item{event: event, activity: true, identity: activity.ActivityID, order: index})
+		for index, event := range normalizeActivityEvents(activity.Events, activity.ActivityID) {
+			items = append(items, item{event: event, activity: true, identity: activity.ActivityID, source: activityIndex + 1, order: index})
 		}
 	}
 	sort.SliceStable(items, func(left, right int) bool {
-		if items[left].event.ObservedAt.Equal(items[right].event.ObservedAt) {
+		leftID, leftNumeric := temporalEventOrder(items[left].event.ID)
+		rightID, rightNumeric := temporalEventOrder(items[right].event.ID)
+		if leftNumeric && rightNumeric && leftID != rightID {
+			return leftID < rightID
+		}
+		if leftNumeric != rightNumeric {
+			return leftNumeric
+		}
+		if items[left].source == items[right].source && items[left].order != items[right].order {
 			return items[left].order < items[right].order
 		}
-		return items[left].event.ObservedAt.Before(items[right].event.ObservedAt)
+		if !items[left].event.ObservedAt.Equal(items[right].event.ObservedAt) {
+			return items[left].event.ObservedAt.Before(items[right].event.ObservedAt)
+		}
+		if items[left].source != items[right].source {
+			return items[left].source < items[right].source
+		}
+		return items[left].order < items[right].order
 	})
 	store := ingest.NewMemory(workflow.RunID, workflow.AttemptID, 100_000)
 	localSequence := uint64(0)
@@ -134,22 +150,37 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 	if raw.ObservedAt.IsZero() {
 		return model.Event{}, false, fmt.Errorf("Temporal history event %q has no observed time", raw.Type)
 	}
+	attrs := cloneAttributes(raw.Attributes)
+	attrs["temporal.eventType"] = raw.Type
+	activityEvent := strings.HasPrefix(raw.Type, "activity.")
+	isEffect := strings.HasPrefix(raw.Type, "activity.effect_")
+	if activityEvent {
+		activity = true
+	}
+	if activity && !activityEvent && identity != "" && attrs["taskId"] == "" {
+		attrs["taskId"] = identity
+	}
+	scheduledEventID := strings.TrimSpace(attrs["scheduledEventId"])
+	if raw.Type == "activity.scheduled" && scheduledEventID == "" {
+		scheduledEventID = strings.TrimSpace(raw.ID)
+		if scheduledEventID != "" {
+			attrs["scheduledEventId"] = scheduledEventID
+		}
+	}
+	if activityEvent && !isEffect && scheduledEventID == "" {
+		return model.Event{}, false, fmt.Errorf("Temporal activity event %q has no scheduledEventId", raw.Type)
+	}
 	name := raw.ID
-	if activity && identity != "" {
+	if activityEvent && !isEffect {
+		name = scheduledEventID
+	}
+	if activity && !activityEvent && identity != "" {
 		name = identity
 	}
 	if name == "" {
 		name = raw.Type
 	}
-	attrs := cloneAttributes(raw.Attributes)
-	attrs["temporal.eventType"] = raw.Type
-	if strings.HasPrefix(raw.Type, "activity.") && attrs["taskId"] != "" {
-		activity, identity, name = true, attrs["taskId"], attrs["taskId"]
-	}
-	if activity && identity != "" && attrs["taskId"] == "" {
-		attrs["taskId"] = identity
-	}
-	if strings.HasPrefix(raw.Type, "activity.effect_") {
+	if isEffect {
 		name = attrs["effectId"]
 		if name == "" {
 			return model.Event{}, false, fmt.Errorf("Temporal effect event %q has no effectId", raw.Type)
@@ -170,18 +201,39 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 		typ = model.EventCheckpointReached
 	case "workflow.checkpoint_released":
 		typ = model.EventCheckpointReleased
-	case "workflow.cancel_requested":
-		typ = model.EventCancelRequested
-	case "workflow.cancel_delivered":
-		typ = model.EventCancelDelivered
-	case "workflow.cancel_observed":
-		typ = model.EventCancelObserved
+	case "workflow.cancel_requested", "workflow.cancel_delivered", "workflow.cancel_observed":
+		prefix = "cancellation"
+		if cancellationID := strings.TrimSpace(attrs["cancellationId"]); cancellationID != "" {
+			name = cancellationID
+		}
+		if attrs["targetTask"] == "" {
+			target, err := activityTaskID(workflow.WorkflowID, "workflow")
+			if err != nil {
+				return model.Event{}, false, err
+			}
+			attrs["targetTask"] = target
+			attrs["targetKind"] = "workflow"
+		}
+		if attrs["trigger"] == "" {
+			attrs["trigger"] = "temporal.workflow"
+		}
+		switch raw.Type {
+		case "workflow.cancel_requested":
+			typ = model.EventCancelRequested
+		case "workflow.cancel_delivered":
+			typ = model.EventCancelDelivered
+		case "workflow.cancel_observed":
+			typ = model.EventCancelObserved
+		}
 	case "workflow.drain_completed":
 		typ = model.EventDrainCompleted
 	case "activity.scheduled":
 		activity = true
 		typ, prefix = model.EventTaskRegistered, "task"
 		attrs["kind"] = "temporal.activity"
+		if attrs["name"] == "" {
+			attrs["name"] = attrs["activityId"]
+		}
 	case "activity.started":
 		activity = true
 		typ, prefix = model.EventTaskStarted, "task"
@@ -198,24 +250,98 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 	case "activity.heartbeat_cancel_observed":
 		activity = true
 		typ, prefix = model.EventCancelObserved, "cancellation"
-	case "activity.effect_declared", "activity.effect_attempted", "activity.effect_committed", "activity.effect_failed", "activity.effect_unknown":
+	case "activity.effect_declared", "activity.effect_attempted", "activity.effect_committed", "activity.effect_failed", "activity.effect_unknown", "activity.effect_compensated":
 		activity = true
 		typ, prefix = effectEventType(raw.Type)
 	default:
 		return model.Event{}, false, nil
 	}
-	if activity && prefix == "workflow" {
-		prefix = "task"
+	var taskID string
+	if activityEvent && !isEffect {
+		var err error
+		taskID, err = activityTaskID(workflow.WorkflowID, scheduledEventID)
+		if err != nil {
+			return model.Event{}, false, err
+		}
+		if typ == model.EventCancelRequested || typ == model.EventCancelObserved {
+			attrs["targetTask"] = taskID
+		}
+		if typ == model.EventCancelObserved {
+			attrs["targetKind"] = "activity"
+		}
 	}
 	id, err := model.ContentID(prefix, workflow.WorkflowID, name)
 	if err != nil {
 		return model.Event{}, false, err
 	}
 	parent := ""
-	if taskName := attrs["taskId"]; taskName != "" {
-		parent, _ = model.ContentID("task", workflow.WorkflowID, taskName)
+	switch typ {
+	case model.EventEffectDeclared, model.EventEffectAttempted, model.EventEffectCommitted, model.EventEffectFailed, model.EventEffectUnknown, model.EventEffectCompensated:
+		if scheduledEventID != "" {
+			parent, err = activityTaskID(workflow.WorkflowID, scheduledEventID)
+		} else if taskName := strings.TrimSpace(attrs["taskId"]); taskName != "" {
+			parent, err = activityTaskID(workflow.WorkflowID, "activity:"+taskName)
+		}
+		if err != nil {
+			return model.Event{}, false, err
+		}
+	case model.EventCancelObserved:
+		parent = attrs["targetTask"]
+	case model.EventCheckpointReached:
+		parent = attrs["targetTask"]
 	}
 	return model.Event{SchemaVersion: model.EventSchemaVersion, RunID: workflow.RunID, AttemptID: workflow.AttemptID, SessionID: workflow.SessionID, Type: typ, EntityID: id, ParentEntityID: parent, ObservedAt: raw.ObservedAt, Attributes: attrs}, true, nil
+}
+
+func normalizeActivityEvents(events []HistoryEvent, activityID string) []HistoryEvent {
+	scheduledIDs := make([]string, 0, 1)
+	seen := make(map[string]struct{})
+	for _, event := range events {
+		if event.Type != "activity.scheduled" || strings.TrimSpace(event.ID) == "" {
+			continue
+		}
+		if _, ok := seen[event.ID]; ok {
+			continue
+		}
+		seen[event.ID] = struct{}{}
+		scheduledIDs = append(scheduledIDs, event.ID)
+	}
+	result := make([]HistoryEvent, len(events))
+	for index, event := range events {
+		event.Attributes = cloneAttributes(event.Attributes)
+		if event.Type == "activity.scheduled" {
+			if event.Attributes["scheduledEventId"] == "" {
+				event.Attributes["scheduledEventId"] = event.ID
+			}
+			if event.Attributes["activityId"] == "" {
+				event.Attributes["activityId"] = activityID
+			}
+			if event.Attributes["taskId"] == "" {
+				event.Attributes["taskId"] = activityID
+			}
+		} else if strings.HasPrefix(event.Type, "activity.") {
+			if event.Attributes["scheduledEventId"] == "" && len(scheduledIDs) == 1 {
+				event.Attributes["scheduledEventId"] = scheduledIDs[0]
+			}
+			if event.Attributes["activityId"] == "" {
+				event.Attributes["activityId"] = activityID
+			}
+		}
+		result[index] = event
+	}
+	return result
+}
+
+func temporalEventOrder(id string) (uint64, bool) {
+	value, err := strconv.ParseUint(strings.TrimSpace(id), 10, 64)
+	return value, err == nil && value > 0
+}
+
+func activityTaskID(workflowID, scheduledEventID string) (string, error) {
+	if strings.TrimSpace(scheduledEventID) == "" {
+		return "", fmt.Errorf("Temporal activity correlation is missing scheduledEventId")
+	}
+	return model.ContentID("task", workflowID, scheduledEventID)
 }
 
 func effectEventType(raw string) (model.EventType, string) {
@@ -231,6 +357,8 @@ func effectEventType(raw string) (model.EventType, string) {
 		kind = "failed"
 	case "activity.effect_unknown":
 		kind = "unknown"
+	case "activity.effect_compensated":
+		kind = "compensated"
 	}
 	return model.EventType("effect." + kind), "effect"
 }

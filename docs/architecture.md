@@ -37,6 +37,8 @@ Dependencies point toward `internal/model`. Runtime adapters translate their own
 
 The scheduler controls only declared checkpoint releases. It does not control the Go runtime scheduler.
 
+Temporal history correlation uses the SDK history relationship from each activity lifecycle event back to its `ActivityTaskScheduled` event. The scheduled event ID is the task identity, so retries and concurrent activities with the same activity ID or type remain separate. A lifecycle event without a unique scheduled-event relationship is retained as incomplete evidence; Cutline does not infer ownership from names or wall-clock ordering.
+
 ## Temporal
 
 The Temporal adapter reads completed history from a local, loopback Temporal server and translates workflow and activity lifecycle events into the same model. It keeps unsupported history and unknown external effect outcomes explicit rather than guessing a result.

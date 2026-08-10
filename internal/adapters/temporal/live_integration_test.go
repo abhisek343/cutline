@@ -14,7 +14,8 @@ import (
 
 func TestLiveFetchReadsCanceledWorkflowFromTemporalServer(t *testing.T) {
 	const namespace, taskQueue, workflowID = "default", "cutline-live", "cutline-live-cancel"
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Temporal auto-setup applies its PostgreSQL schema before the frontend accepts gRPC.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 	api, err := newLiveClient(ctx, namespace)
 	if err != nil {

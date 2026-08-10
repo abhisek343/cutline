@@ -186,6 +186,12 @@ func (p *Postgres) Append(event model.Event) (model.Event, error) {
 		return model.Event{}, ingest.ErrFrozen
 	}
 	if p.maxEvents > 0 && next > uint64(p.maxEvents) {
+		if err := markIncompleteTx(ctx, tx, p.runID, p.attemptID, ingest.ErrEventLimit.Error()); err != nil {
+			return model.Event{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return model.Event{}, fmt.Errorf("commit event-limit evidence: %w", err)
+		}
 		return model.Event{}, ingest.ErrEventLimit
 	}
 	var last uint64
@@ -198,11 +204,21 @@ func (p *Postgres) Append(event model.Event) (model.Event, error) {
 		return model.Event{}, ingest.ErrDuplicate
 	}
 	if event.LocalSequence != last+1 {
+		reason := fmt.Sprintf("%v: session %s got %d after %d", ingest.ErrSequenceGap, event.SessionID, event.LocalSequence, last)
+		if err := markIncompleteTx(ctx, tx, p.runID, p.attemptID, reason); err != nil {
+			return model.Event{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return model.Event{}, fmt.Errorf("commit sequence-gap evidence: %w", err)
+		}
 		return model.Event{}, ingest.ErrSequenceGap
 	}
 	attributes, err := json.Marshal(event.Attributes)
 	if err != nil {
 		return model.Event{}, fmt.Errorf("marshal event attributes: %w", err)
+	}
+	if string(attributes) == "null" {
+		attributes = []byte(`{}`)
 	}
 	event.CanonicalOrder = next
 	if _, err := tx.Exec(ctx, `
@@ -223,6 +239,18 @@ func (p *Postgres) Append(event model.Event) (model.Event, error) {
 		return model.Event{}, fmt.Errorf("commit evidence event: %w", err)
 	}
 	return event, nil
+}
+
+func markIncompleteTx(ctx context.Context, tx pgx.Tx, runID model.RunID, attemptID model.AttemptID, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO evidence_incomplete_reasons (run_id, attempt_id, reason)
+		VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, runID, attemptID, reason); err != nil {
+		return fmt.Errorf("record incomplete evidence: %w", err)
+	}
+	return nil
 }
 
 func (p *Postgres) MarkIncomplete(reason string) error {

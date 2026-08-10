@@ -174,6 +174,7 @@ func Build(input BuildInput) View {
 	}
 	tasks := make(map[string]*Task)
 	cancellations := make(map[string]*Cancellation)
+	validCancellations := make(map[string]bool)
 	checkpoints := make(map[string]model.Event)
 	effects := make(map[string]*Effect)
 	resources := make(map[string]*Resource)
@@ -227,34 +228,68 @@ func Build(input BuildInput) View {
 			}
 		case model.EventCheckpointReleased:
 		case model.EventCancelRequested:
-			capabilities[CapabilityCancellationRequested] = true
+			if _, exists := cancellations[event.EntityID]; exists {
+				v.Issues = append(v.Issues, Issue{Code: "duplicate_cancellation_request", Message: "cancellation was requested more than once", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
 			cancel := &Cancellation{ID: event.EntityID, TargetTaskID: event.Attributes["targetTask"], Trigger: event.Attributes["trigger"], RequestedOrder: event.CanonicalOrder}
+			valid := true
 			if cancel.TargetTaskID == "" {
 				v.Issues = append(v.Issues, Issue{Code: "missing_cancel_target", Message: "cancellation target is missing", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				valid = false
+			} else if _, ok := tasks[cancel.TargetTaskID]; !ok && event.Attributes["targetKind"] != "workflow" {
+				v.Issues = append(v.Issues, Issue{Code: "missing_cancel_target", Message: "cancellation target task is not registered", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				valid = false
 			}
 			cancellations[event.EntityID] = cancel
+			validCancellations[event.EntityID] = valid
 			v.Cancellations = append(v.Cancellations, *cancel)
-			if _, ok := tasks[cancel.TargetTaskID]; ok {
+			if valid {
+				capabilities[CapabilityCancellationRequested] = true
 				v.Edges = append(v.Edges, Edge{From: cancel.ID, To: cancel.TargetTaskID, Relation: "cancellation.targets", EvidenceOrder: event.CanonicalOrder})
-			}
-			for visitID, visit := range checkpoints {
-				if visit.Attributes["point"] == event.Attributes["point"] && visit.CanonicalOrder < event.CanonicalOrder {
-					v.Edges = append(v.Edges, Edge{From: visitID, To: cancel.ID, Relation: "schedule.caused", EvidenceOrder: event.CanonicalOrder})
+				for visitID, visit := range checkpoints {
+					if visit.Attributes["point"] == event.Attributes["point"] && visit.CanonicalOrder < event.CanonicalOrder {
+						v.Edges = append(v.Edges, Edge{From: visitID, To: cancel.ID, Relation: "schedule.caused", EvidenceOrder: event.CanonicalOrder})
+					}
 				}
 			}
 		case model.EventCancelDelivered:
+			cancel := cancellations[event.EntityID]
+			if cancel == nil || !validCancellations[event.EntityID] {
+				v.Issues = append(v.Issues, Issue{Code: "orphan_cancellation_delivery", Message: "cancellation delivery has no valid request", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
+			if cancel.DeliveredOrder != 0 {
+				v.Issues = append(v.Issues, Issue{Code: "duplicate_cancellation_delivery", Message: "cancellation was delivered more than once", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
+			if event.CanonicalOrder <= cancel.RequestedOrder || cancel.ObservedOrder != 0 {
+				v.Issues = append(v.Issues, Issue{Code: "cancellation_order", Message: "cancellation delivery is not after its request and before its observation", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
+			cancel.DeliveredOrder = event.CanonicalOrder
 			capabilities[CapabilityCancellationDelivered] = true
-			if cancel := cancellations[event.EntityID]; cancel != nil {
-				cancel.DeliveredOrder = event.CanonicalOrder
-			}
 		case model.EventCancelObserved:
-			capabilities[CapabilityCancellationObserved] = true
-			if cancel := cancellations[event.EntityID]; cancel != nil {
-				cancel.ObservedOrder = event.CanonicalOrder
-				if event.ParentEntityID != "" {
-					v.Edges = append(v.Edges, Edge{From: cancel.ID, To: event.ParentEntityID, Relation: "cancellation.observed-by", EvidenceOrder: event.CanonicalOrder})
-				}
+			cancel := cancellations[event.EntityID]
+			if cancel == nil || !validCancellations[event.EntityID] {
+				v.Issues = append(v.Issues, Issue{Code: "orphan_cancellation_observation", Message: "cancellation observation has no valid request", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
 			}
+			if cancel.ObservedOrder != 0 {
+				v.Issues = append(v.Issues, Issue{Code: "duplicate_cancellation_observation", Message: "cancellation was observed more than once", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
+			if event.ParentEntityID == "" || event.ParentEntityID != cancel.TargetTaskID {
+				v.Issues = append(v.Issues, Issue{Code: "cancellation_observation_parent", Message: "cancellation observation is not attributed to its target task", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
+			if event.CanonicalOrder <= cancel.RequestedOrder || (cancel.DeliveredOrder != 0 && event.CanonicalOrder <= cancel.DeliveredOrder) {
+				v.Issues = append(v.Issues, Issue{Code: "cancellation_order", Message: "cancellation observation is not after its request and delivery", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				break
+			}
+			cancel.ObservedOrder = event.CanonicalOrder
+			capabilities[CapabilityCancellationObserved] = true
+			v.Edges = append(v.Edges, Edge{From: cancel.ID, To: event.ParentEntityID, Relation: "cancellation.observed-by", EvidenceOrder: event.CanonicalOrder})
 		case model.EventEffectDeclared:
 			effect := &Effect{ID: event.EntityID, OwnerTaskID: event.ParentEntityID, Kind: event.Attributes["kind"], IdempotencyKey: event.Attributes["idempotencyKey"], EvidenceSource: event.Attributes["evidenceSource"], State: model.EffectDeclared, DeclaredOrder: event.CanonicalOrder}
 			effects[event.EntityID] = effect
