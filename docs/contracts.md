@@ -44,6 +44,8 @@ The CEL environment reads a typed, frozen view:
 
 Use a committed effect only when its dependency outcome is authoritative. An unknown outcome stays unknown and can make a contract inconclusive.
 
+Temporal helper boundaries use the frozen event timestamps exposed by the view. `startedAfter` is strict (`startedAt > boundary`), `isTerminalAt` and `isReleasedAt` are inclusive (`transitionAt <= boundary`), and `wasCompensatedBefore` is strict (`compensatedAt < boundary`). Equality therefore counts as terminal/released but not as compensated before the boundary. Canonical event order remains authoritative for ingest order, lifecycle validation, and built-in order checks; timestamp predicates never replace those checks. A missing or malformed boundary/transition timestamp makes evaluation inconclusive rather than returning a false predicate that could create a pass.
+
 ## Examples
 
 No forbidden effect after observation:

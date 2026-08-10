@@ -96,6 +96,11 @@ func (e *CELEngine) Evaluate(view evidence.View, spec campaign.ContractSpec) Res
 			result.Message = "required boundary is missing: " + spec.Boundary
 			return result
 		}
+		if _, ok := view.BoundaryTime(spec.Boundary); !ok {
+			result.Status = StatusInconclusive
+			result.Message = "required boundary timestamp is missing: " + spec.Boundary
+			return result
+		}
 		result.BoundaryOrder = order
 	}
 	ast, issues := e.env.Compile(spec.Expression)
@@ -167,7 +172,8 @@ func activation(view evidence.View) map[string]any {
 			"id": effect.ID, "kind": effect.Kind, "committed": effect.State == model.EffectCommitted,
 			"startedAt": eventTime(view, effect.ID, "attempted"), "committedAt": eventTime(view, effect.ID, "committed"),
 			"ownerTask": effect.OwnerTaskID, "idempotencyKey": effect.IdempotencyKey,
-			"compensated": effect.State == model.EffectCompensated, "terminal": effect.TerminalOrder > 0,
+			"compensated": effect.State == model.EffectCompensated, "compensatedAt": eventTime(view, effect.ID, "compensated"),
+			"terminal": effect.TerminalOrder > 0,
 		})
 	}
 	tasks := make([]any, 0, len(view.Tasks))
@@ -187,7 +193,16 @@ func activation(view evidence.View) map[string]any {
 }
 
 func eventTime(view evidence.View, entityID, phase string) time.Time {
-	wanted := map[string]model.EventType{"requested": model.EventCancelRequested, "delivered": model.EventCancelDelivered, "observed": model.EventCancelObserved, "attempted": model.EventEffectAttempted, "committed": model.EventEffectCommitted, "finished": model.EventTaskFinished, "released": model.EventResourceReleased}[phase]
+	wanted := map[string]model.EventType{
+		"requested":   model.EventCancelRequested,
+		"delivered":   model.EventCancelDelivered,
+		"observed":    model.EventCancelObserved,
+		"attempted":   model.EventEffectAttempted,
+		"committed":   model.EventEffectCommitted,
+		"compensated": model.EventEffectCompensated,
+		"finished":    model.EventTaskFinished,
+		"released":    model.EventResourceReleased,
+	}[phase]
 	for _, event := range view.Events {
 		if event.EntityID == entityID && event.Type == wanted {
 			return event.ObservedAt
@@ -225,12 +240,18 @@ func timestampNative(value ref.Val) (time.Time, bool) {
 
 func startedAfter(effect, boundary ref.Val) ref.Val {
 	values := mapNative(effect)
-	when, ok := timestampNative(boundary)
-	if values == nil || !ok {
-		return types.Bool(false)
+	when, err := temporalBoundary(boundary)
+	if values == nil {
+		return types.NewErr("cutline startedAfter requires an effect object")
+	}
+	if err != nil {
+		return types.NewErr("cutline startedAfter: %s", err)
 	}
 	at, ok := values["startedAt"].(time.Time)
-	return types.Bool(ok && !at.IsZero() && at.After(when))
+	if !ok || at.IsZero() {
+		return types.NewErr("cutline startedAfter: effect startedAt is missing")
+	}
+	return types.Bool(at.After(when))
 }
 
 func descendsFrom(task, ancestor ref.Val) ref.Val {
@@ -251,19 +272,69 @@ func descendsFrom(task, ancestor ref.Val) ref.Val {
 	return types.Bool(false)
 }
 
-func isTerminalAt(task, _ ref.Val) ref.Val {
+func isTerminalAt(task, boundary ref.Val) ref.Val {
 	values := mapNative(task)
-	return types.Bool(values != nil && values["terminal"] == true)
+	when, err := temporalBoundary(boundary)
+	if values == nil {
+		return types.NewErr("cutline isTerminalAt requires a task object")
+	}
+	if err != nil {
+		return types.NewErr("cutline isTerminalAt: %s", err)
+	}
+	if values["terminal"] != true {
+		return types.Bool(false)
+	}
+	at, ok := values["terminalAt"].(time.Time)
+	if !ok || at.IsZero() {
+		return types.NewErr("cutline isTerminalAt: terminalAt is missing")
+	}
+	return types.Bool(!at.After(when))
 }
 
-func wasCompensatedBefore(effect, _ ref.Val) ref.Val {
+func wasCompensatedBefore(effect, boundary ref.Val) ref.Val {
 	values := mapNative(effect)
-	return types.Bool(values != nil && values["compensated"] == true)
+	when, err := temporalBoundary(boundary)
+	if values == nil {
+		return types.NewErr("cutline wasCompensatedBefore requires an effect object")
+	}
+	if err != nil {
+		return types.NewErr("cutline wasCompensatedBefore: %s", err)
+	}
+	if values["compensated"] != true {
+		return types.Bool(false)
+	}
+	at, ok := values["compensatedAt"].(time.Time)
+	if !ok || at.IsZero() {
+		return types.NewErr("cutline wasCompensatedBefore: compensatedAt is missing")
+	}
+	return types.Bool(at.Before(when))
 }
 
-func isReleasedAt(resource, _ ref.Val) ref.Val {
+func isReleasedAt(resource, boundary ref.Val) ref.Val {
 	values := mapNative(resource)
-	return types.Bool(values != nil && values["released"] == true)
+	when, err := temporalBoundary(boundary)
+	if values == nil {
+		return types.NewErr("cutline isReleasedAt requires a resource object")
+	}
+	if err != nil {
+		return types.NewErr("cutline isReleasedAt: %s", err)
+	}
+	if values["released"] != true {
+		return types.Bool(false)
+	}
+	at, ok := values["releasedAt"].(time.Time)
+	if !ok || at.IsZero() {
+		return types.NewErr("cutline isReleasedAt: releasedAt is missing")
+	}
+	return types.Bool(!at.After(when))
+}
+
+func temporalBoundary(value ref.Val) (time.Time, error) {
+	when, ok := timestampNative(value)
+	if !ok || when.IsZero() {
+		return time.Time{}, fmt.Errorf("boundary must be a non-zero timestamp")
+	}
+	return when, nil
 }
 
 func expiredSafely(resource ref.Val) ref.Val {

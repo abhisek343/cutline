@@ -137,17 +137,33 @@ func translateSDKEvent(event *historypb.HistoryEvent, options LiveOptions) Histo
 		raw.Type = "workflow.signaled"
 	case enums.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
 		raw.Type = "activity.scheduled"
-		attributes["taskId"] = event.GetActivityTaskScheduledEventAttributes().GetActivityId()
+		attributes["activityId"] = event.GetActivityTaskScheduledEventAttributes().GetActivityId()
+		attributes["taskId"] = attributes["activityId"]
+		attributes["scheduledEventId"] = raw.ID
 	case enums.EVENT_TYPE_ACTIVITY_TASK_STARTED:
 		raw.Type = "activity.started"
+		setActivityCorrelation(attributes, event.GetActivityTaskStartedEventAttributes().GetScheduledEventId(), raw.ID)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
 		raw.Type = "activity.completed"
+		setActivityCorrelation(attributes, event.GetActivityTaskCompletedEventAttributes().GetScheduledEventId(), raw.ID)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_FAILED:
 		raw.Type = "activity.failed"
+		setActivityCorrelation(attributes, event.GetActivityTaskFailedEventAttributes().GetScheduledEventId(), raw.ID)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED:
 		raw.Type = "activity.cancel_requested"
+		setActivityCorrelation(attributes, event.GetActivityTaskCancelRequestedEventAttributes().GetScheduledEventId(), raw.ID)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_CANCELED:
 		raw.Type = "activity.canceled"
+		setActivityCorrelation(attributes, event.GetActivityTaskCanceledEventAttributes().GetScheduledEventId(), raw.ID)
 	}
 	return raw
+}
+
+func setActivityCorrelation(attributes map[string]string, scheduledEventID int64, historyEventID string) {
+	attributes["temporal.historyEventId"] = historyEventID
+	if scheduledEventID > 0 {
+		attributes["scheduledEventId"] = strconv.FormatInt(scheduledEventID, 10)
+		return
+	}
+	attributes["temporal.scheduledEventIdMissing"] = "true"
 }

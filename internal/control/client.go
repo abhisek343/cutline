@@ -75,6 +75,14 @@ func Dial(ctx context.Context, config ClientConfig) (*Client, error) {
 }
 
 func (c *Client) handshake(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = c.conn.Close()
+	})
+	defer stop()
+
 	request := Request{
 		ProtocolVersion: ProtocolVersion,
 		RequestID:       "hello",
@@ -90,10 +98,16 @@ func (c *Client) handshake(ctx context.Context) error {
 		defer c.conn.SetDeadline(noDeadline)
 	}
 	if err := c.encoder.Encode(request); err != nil {
+		if contextErr := handshakeContextError(ctx, err); contextErr != nil {
+			return contextErr
+		}
 		return fmt.Errorf("send control hello: %w", err)
 	}
 	var response Response
 	if err := c.decoder.Decode(&response); err != nil {
+		if contextErr := handshakeContextError(ctx, err); contextErr != nil {
+			return contextErr
+		}
 		return fmt.Errorf("read control hello: %w", err)
 	}
 	if response.ProtocolVersion != ProtocolVersion || response.ReplyTo != request.RequestID {
@@ -106,9 +120,24 @@ func (c *Client) handshake(ctx context.Context) error {
 	return nil
 }
 
+func handshakeContextError(ctx context.Context, err error) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		return context.Cause(ctx)
+	}
+	if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+		if deadline, hasDeadline := ctx.Deadline(); hasDeadline && !time.Now().Before(deadline) {
+			return context.DeadlineExceeded
+		}
+	}
+	return nil
+}
+
 // SendEvent blocks until the coordinator acknowledges the event and returns any
 // checkpoint scheduling decision.
 func (c *Client) SendEvent(ctx context.Context, event model.Event) (Decision, error) {
+	if err := ctx.Err(); err != nil {
+		return Decision{}, context.Cause(ctx)
+	}
 	requestID := fmt.Sprintf("req-%d", c.nextID.Add(1))
 	resultCh := make(chan callResult, 1)
 
@@ -164,8 +193,8 @@ func (c *Client) SendEvent(ctx context.Context, event model.Event) (Decision, er
 		return Decision{}, context.Cause(ctx)
 	case <-c.closed:
 		c.removePending(requestID)
-		if c.readErr != nil {
-			return Decision{}, c.readErr
+		if err := c.readError(); err != nil {
+			return Decision{}, err
 		}
 		return Decision{}, ErrDisconnected
 	}
@@ -198,6 +227,12 @@ func (c *Client) removePending(requestID string) {
 	c.pendingMu.Lock()
 	delete(c.pending, requestID)
 	c.pendingMu.Unlock()
+}
+
+func (c *Client) readError() error {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	return c.readErr
 }
 
 func (c *Client) shutdown(err error) {
