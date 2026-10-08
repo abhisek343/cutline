@@ -30,7 +30,7 @@ for arch in amd64 arm64; do
   (
     cd "$root"
     GOOS=linux GOARCH="$arch" CGO_ENABLED=0 \
-      go build -trimpath -o "$package_root/cutline" ./cmd/cutline
+      go build -buildvcs=false -trimpath -o "$package_root/cutline" ./cmd/cutline
   )
 
   cp "$root/README.md" "$root/LICENSE" "$package_root/"

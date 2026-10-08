@@ -76,3 +76,11 @@ No child task remains active at drain:
 Before CEL runs, Cutline checks canonical event order, task lifecycle, cancellation ordering, effect transitions, and schedule integrity. Evaluation is inconclusive when the control channel disconnects, event sequence has a gap, drain times out, a required capability is absent, or a dependency result is unknown.
 
 Contract and evidence schemas are versioned. A newer binary must reject an unsupported major version rather than reinterpret prior evidence.
+
+## Boundary semantics and minimizable witnesses
+
+`isTerminalAt` and `isReleasedAt` compare the observed transition with the supplied boundary inclusively. `wasCompensatedBefore` is strict: a transition at the boundary is not before it. Missing or invalid observations make evaluation inconclusive. A compensated effect retains the historical fact that it committed.
+
+Unknown or attempt-only external outcomes and contradictory authoritative receipts make the evidence incomplete even when a contract omits optional capability requirements. A drain marker grants `drain.registered_tasks` only with consistent terminal evidence for every registered task.
+
+Automatic failure signatures and minimization support the canonical predicate `!effects.exists(e, predicate)`, evaluated against the original full evidence view. Other valid CEL expressions still receive a verdict; a violation without a supported counterexample witness explicitly reports that minimization is unavailable. A signature includes the contract definition and the violating effect's semantic identity, so another effect or changed rule is not the same failure.

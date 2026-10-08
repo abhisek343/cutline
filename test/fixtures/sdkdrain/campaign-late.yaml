@@ -1,0 +1,25 @@
+apiVersion: cutline.dev/v1alpha1
+kind: Campaign
+name: registered-descendant-late-effect
+
+target:
+  adapter: go-test
+  command: [go, test, ./test/fixtures/sdkdrain, -run, ^TestCutlineTarget$, -count=1, -args, -cutline-drain-mode=late]
+
+exploration:
+  strategy: single-cut
+  maxSchedules: 1
+  maxPointVisits: 10
+  scheduleTimeout: 30s
+  drainTimeout: 1s
+  cancelAt: [root-return]
+  seed: 1
+
+contracts:
+  - name: no-email-after-cancel
+    version: 1
+    severity: critical
+    requires: [cancellation.observed, effects.authoritative_commit, drain.registered_tasks]
+    boundary: cancellation-observed
+    expression: >
+      !effects.exists(e, e.kind == "email.send" && e.committed && e.startedAfter(cancel.observedAt))

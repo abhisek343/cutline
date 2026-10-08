@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/cutline-completion-20261008]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,7 +12,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
@@ -35,20 +36,30 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test ./...
+        run: go test ./... -timeout=20m
 
       - name: Race test
-        run: go test -race ./...
+        run: go test -race ./... -timeout=20m
 
       - name: Build
-        run: go build -trimpath -o /tmp/cutline ./cmd/cutline
+        run: go build -buildvcs=false -trimpath -o /tmp/cutline ./cmd/cutline
 
       - name: Package Linux release candidate
         run: make package VERSION=v0.0.0-ci OUT_DIR=/tmp/cutline-dist
 
+      - name: Smoke test unpacked Linux release
+        run: bash scripts/verify-package.sh /tmp/cutline-dist v0.0.0-ci
+
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: cutline-linux-release-candidate
+          path: /tmp/cutline-dist
+          retention-days: 7
+
   integration-postgres:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -60,12 +71,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test PostgreSQL schema
-        run: go test -tags=integration ./internal/ledger -run TestPostgresSchemaConstraintsAndFreeze -count=1 -timeout=5m
+      - name: Test PostgreSQL schema and runtime persistence
+        run: go test -tags=integration ./internal/ledger ./internal/cli -count=1 -timeout=15m
 
   integration-temporal:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
@@ -79,3 +90,12 @@ jobs:
 
       - name: Test live Temporal history ingestion
         run: bash test/temporal/run-integration.sh
+
+      - name: Upload Temporal replay evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cutline-temporal-evidence
+          path: artifacts/temporal*
+          if-no-files-found: ignore
+          retention-days: 7

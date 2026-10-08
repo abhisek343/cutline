@@ -1,6 +1,7 @@
 package signature
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/abhisek343/cutline/internal/campaign"
@@ -72,7 +73,80 @@ func signatureView(t *testing.T, label string) (evidence.View, string) {
 		RunID: model.RunID(run), AttemptID: model.AttemptID(attempt),
 		Tasks:         []evidence.Task{{ID: task, Kind: "native.root", State: model.TaskCancelled, RegisteredOrder: 2, TerminalOrder: 10}},
 		Cancellations: []evidence.Cancellation{{ID: cancel, TargetTaskID: task, Trigger: "explicit", RequestedOrder: 6, ObservedOrder: 7}},
-		Effects:       []evidence.Effect{{ID: effect, OwnerTaskID: task, Kind: "payment.charge", State: model.EffectCommitted, AttemptOrder: 9, CommitOrder: 11, TerminalOrder: 11}},
+		Effects:       []evidence.Effect{{ID: effect, OwnerTaskID: task, Kind: "payment.charge", IdempotencyKey: "order-1", State: model.EffectCommitted, AttemptOrder: 9, CommitOrder: 11, TerminalOrder: 11}},
 		Edges:         []evidence.Edge{{From: task, To: visit, Relation: "task.reached"}, {From: visit, To: cancel, Relation: "schedule.caused"}},
 	}, effect
+}
+
+func TestSignatureRequiresActualWitnessAndPreservesContractScope(t *testing.T) {
+	view, effectID := signatureView(t, "scope")
+	spec := campaign.ContractSpec{Name: "rule", Expression: `!effects.exists(e, e.kind == "payment.charge" && e.committed)`}
+	unsupported := contracts.Result{Contract: "rule", Status: contracts.StatusViolation, BoundaryOrder: 7}
+	if _, err := Build(view, spec, unsupported, BuildContext{}); !errors.Is(err, ErrUnsupportedWitness) {
+		t.Fatalf("generic result signed: %v", err)
+	}
+	values, err := BuildAll(view, []campaign.ContractSpec{spec}, []contracts.Result{unsupported}, BuildContext{})
+	if err != nil || len(values) != 0 {
+		t.Fatalf("unsupported violation should remain unsigned: values=%+v err=%v", values, err)
+	}
+	evaluation := contracts.Result{Contract: "rule", Status: contracts.StatusViolation, OffendingEffectID: effectID}
+	original, err := Build(view, spec, evaluation, BuildContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []string{"expression", "boundary", "requires", "effect-key", "source"} {
+		t.Run(change, func(t *testing.T) {
+			changedSpec := spec
+			changedView := view
+			changedView.Effects = append([]evidence.Effect(nil), view.Effects...)
+			switch change {
+			case "expression":
+				changedSpec.Expression = "false"
+			case "boundary":
+				changedSpec.Boundary = "cancellation-observed"
+			case "requires":
+				changedSpec.Requires = []string{evidence.CapabilityAuthoritativeCommit}
+			case "effect-key":
+				changedView.Effects[0].IdempotencyKey = "different-order"
+			case "source":
+				changedView.Effects[0].EvidenceSource = "different-ledger"
+			}
+			changed, err := Build(changedView, changedSpec, evaluation, BuildContext{})
+			if err != nil || changed.Digest == original.Digest {
+				t.Fatalf("signature changed scope undetected: value=%+v err=%v", changed, err)
+			}
+		})
+	}
+}
+
+func TestSignatureMinimizationCannotSwitchSameKindViolations(t *testing.T) {
+	view, _ := signatureView(t, "multiple")
+	first := view.Effects[0]
+	first.ID, first.IdempotencyKey = "effect_a", "order-a"
+	second := first
+	second.ID, second.IdempotencyKey = "effect_b", "order-b"
+	unrelated := first
+	unrelated.ID, unrelated.Kind, unrelated.IdempotencyKey = "effect_email", "email.send", "unrelated"
+	view.Effects = []evidence.Effect{unrelated, second, first}
+	spec := campaign.ContractSpec{Name: "no-charge", Expression: `!effects.exists(e, e.kind == "payment.charge" && e.committed)`}
+	build := func(v evidence.View) Signature {
+		t.Helper()
+		evaluation := contracts.Evaluate(v, []campaign.ContractSpec{spec})[0]
+		value, err := Build(v, spec, evaluation, BuildContext{})
+		if err != nil {
+			t.Fatalf("evaluation=%+v err=%v", evaluation, err)
+		}
+		return value
+	}
+	original := build(view)
+	withoutUnrelated := view
+	withoutUnrelated.Effects = []evidence.Effect{second, first}
+	if got := build(withoutUnrelated); got.Digest != original.Digest {
+		t.Fatal("unrelated effect changed the witnessed signature")
+	}
+	withoutWitness := view
+	withoutWitness.Effects = []evidence.Effect{unrelated, second}
+	if got := build(withoutWitness); got.Digest == original.Digest {
+		t.Fatal("removing witnessed violation switched to another effect with the same signature")
+	}
 }

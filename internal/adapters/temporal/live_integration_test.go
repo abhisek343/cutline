@@ -4,10 +4,15 @@ package temporal
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/abhisek343/cutline/internal/evidence"
+	"github.com/abhisek343/cutline/internal/model"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	temporalsdk "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 )
@@ -58,6 +63,70 @@ func liveCancellationWorkflow(ctx workflow.Context) error {
 	return workflow.Await(ctx, func() bool { return false })
 }
 
+func TestLiveFetchCorrelatesRetriedActivitiesFromTemporalServer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	api, err := newLiveClient(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+	w, err := startLiveWorker(ctx, api, "cutline-live-activities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(w.Stop)
+	run, err := api.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "cutline-live-activities", TaskQueue: "cutline-live-activities"}, liveActivitiesWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Get(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := FetchFrom(ctx, api, LiveOptions{WorkflowID: run.GetID(), RunID: run.GetRunID()})
+	if err != nil || !snapshot.Complete() {
+		t.Fatalf("snapshot=%#v err=%v", snapshot, err)
+	}
+	view := evidence.Build(evidence.BuildInput{Snapshot: snapshot})
+	if len(view.Tasks) != 2 {
+		t.Fatalf("tasks=%#v", view.Tasks)
+	}
+	for _, task := range view.Tasks {
+		if task.State != model.TaskCompleted {
+			t.Fatalf("activity lifecycle not correlated: %#v", task)
+		}
+	}
+	starts := 0
+	for _, event := range snapshot.Events {
+		if event.Type == model.EventTaskStarted {
+			starts++
+			if event.Attributes["temporal.attempt"] != "3" {
+				t.Fatalf("retry attempt not preserved: %#v", event)
+			}
+		}
+	}
+	if starts != 2 {
+		t.Fatalf("recorded %d activity starts, want 2", starts)
+	}
+}
+
+func liveActivitiesWorkflow(ctx workflow.Context) error {
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 5 * time.Second, RetryPolicy: &temporalsdk.RetryPolicy{InitialInterval: 10 * time.Millisecond, MaximumAttempts: 3}})
+	first := workflow.ExecuteActivity(ctx, liveRetriedActivity)
+	second := workflow.ExecuteActivity(ctx, liveRetriedActivity)
+	if err := first.Get(ctx, nil); err != nil {
+		return err
+	}
+	return second.Get(ctx, nil)
+}
+
+func liveRetriedActivity(ctx context.Context) error {
+	if activity.GetInfo(ctx).Attempt < 3 {
+		return fmt.Errorf("retry fixture attempt %d", activity.GetInfo(ctx).Attempt)
+	}
+	return nil
+}
+
 func startLiveWorkflow(ctx context.Context, api client.Client, workflowID, taskQueue string) (client.WorkflowRun, error) {
 	for {
 		run, err := api.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: workflowID, TaskQueue: taskQueue}, liveCancellationWorkflow)
@@ -76,6 +145,8 @@ func startLiveWorker(ctx context.Context, api client.Client, taskQueue string) (
 	for {
 		w := worker.New(api, taskQueue, worker.Options{})
 		w.RegisterWorkflow(liveCancellationWorkflow)
+		w.RegisterWorkflow(liveActivitiesWorkflow)
+		w.RegisterActivity(liveRetriedActivity)
 		if err := w.Start(); err == nil {
 			return w, nil
 		}

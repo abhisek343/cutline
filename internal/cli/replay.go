@@ -7,13 +7,15 @@ import (
 
 	"github.com/abhisek343/cutline/internal/adapters/native"
 	"github.com/abhisek343/cutline/internal/adapters/temporal"
+	"github.com/abhisek343/cutline/internal/campaign"
 	"github.com/abhisek343/cutline/internal/capsule"
 	"github.com/abhisek343/cutline/internal/replay"
 	"github.com/spf13/cobra"
 )
 
 func newReplayCommand() *cobra.Command {
-	var outputJSON bool
+	var outputJSON, comparative bool
+	var campaignPath string
 	command := &cobra.Command{
 		Use:   "replay <capsule-directory>",
 		Short: "replay a failure capsule",
@@ -27,28 +29,41 @@ func newReplayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			config := replay.Config{BaseDirectory: base, AllowTargetMismatch: comparative}
+			if campaignPath != "" {
+				spec, loadErr := campaign.LoadFile(campaignPath)
+				if loadErr != nil {
+					return loadErr
+				}
+				config.Campaign = &spec
+			}
 			var result replay.Result
 			if manifest.Adapter == "temporal" {
-				result, err = (temporal.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], replay.Config{})
+				result, err = (temporal.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], config)
 			} else {
-				result, err = (native.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], replay.Config{})
+				result, err = (native.Runner{BaseDirectory: base}).ReplayCapsule(cmd.Context(), args[0], config)
 			}
 			if err != nil {
 				return err
 			}
 			if outputJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "replay: %s\n  expected: %s\n", result.Status, result.Expected.Digest)
+				for _, value := range result.Observed {
+					fmt.Fprintf(cmd.OutOrStdout(), "  observed: %s\n", value.Digest)
+				}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "replay: %s\n  expected: %s\n", result.Status, result.Expected.Digest)
-			for _, value := range result.Observed {
-				fmt.Fprintf(cmd.OutOrStdout(), "  observed: %s\n", value.Digest)
-			}
-			if result.Exact {
+			if result.Exact || result.Status == replay.StatusComparative {
 				return ErrViolation
 			}
 			return ErrInconclusive
 		},
 	}
+	command.Flags().BoolVar(&comparative, "comparative", false, "explicitly compare against an intentionally changed target, campaign, or adapter")
+	command.Flags().StringVarP(&campaignPath, "campaign", "c", "", "replacement campaign for comparative replay")
 	command.Flags().BoolVar(&outputJSON, "json", false, "emit machine-readable JSON")
 	return command
 }

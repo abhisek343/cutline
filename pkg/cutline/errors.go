@@ -10,4 +10,6 @@ var (
 	ErrInvalidPoint         = errors.New("invalid cutline checkpoint")
 	ErrInvalidEffect        = errors.New("invalid cutline effect")
 	ErrInvalidResource      = errors.New("invalid cutline resource")
+	ErrDrainTimeout         = errors.New("cutline registered task drain timed out")
+	ErrTaskScopeClosed      = errors.New("cutline task scope is closed")
 )

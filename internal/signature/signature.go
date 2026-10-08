@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,7 +15,9 @@ import (
 	"github.com/abhisek343/cutline/internal/model"
 )
 
-const Version = 1
+const Version = 2
+
+var ErrUnsupportedWitness = errors.New("minimization requires a supported, stable effect witness")
 
 type BuildContext struct {
 	AdapterMajorVersion string
@@ -26,9 +29,11 @@ type Signature struct {
 	Digest               string   `json:"digest"`
 	Contract             string   `json:"contract"`
 	ContractVersion      int      `json:"contractVersion"`
+	ContractFingerprint  string   `json:"contractFingerprint,omitempty"`
 	ViolationClass       string   `json:"violationClass"`
 	PrimaryEntityKind    string   `json:"primaryEntityKind"`
 	PrimaryIdentityClass string   `json:"primaryIdentityClass"`
+	PrimaryIdentityKey   string   `json:"primaryIdentityKey,omitempty"`
 	CancellationTrigger  string   `json:"cancellationTrigger"`
 	CausalPath           []string `json:"causalPath"`
 	AdapterMajorVersion  string   `json:"adapterMajorVersion"`
@@ -50,6 +55,9 @@ func BuildAll(view evidence.View, specs []campaign.ContractSpec, evaluations []c
 			continue
 		}
 		value, err := Build(view, spec, evaluation, context)
+		if errors.Is(err, ErrUnsupportedWitness) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -77,28 +85,21 @@ func Build(view evidence.View, spec campaign.ContractSpec, evaluation contracts.
 		context.AdapterMajorVersion = "unknown/1"
 	}
 	cancellation := firstCancellation(view)
-	effect, task := primaryEntity(view, evaluation)
-	primaryKind := "none"
-	primaryClass := "none"
-	pathFrom := ""
-	if effect != nil {
-		primaryKind = "effect"
-		primaryClass = stableKind(effect.Kind)
-		pathFrom = effect.OwnerTaskID
-	} else if task != nil {
-		primaryKind = "task"
-		primaryClass = stableKind(task.Kind)
-		pathFrom = task.ID
+	effect := primaryEntity(view, evaluation)
+	if effect == nil || strings.TrimSpace(effect.IdempotencyKey) == "" {
+		return Signature{}, fmt.Errorf("%w: contract %q", ErrUnsupportedWitness, spec.Name)
 	}
-	violationClass := classify(evaluation, effect, task)
-	path := normalizedPath(view, pathFrom, cancellationID(cancellation))
+	violationClass := classify(evaluation, effect)
+	path := normalizedPath(view, effect.OwnerTaskID, cancellationID(cancellation))
 	result := Signature{
 		Version:              Version,
 		Contract:             spec.Name,
 		ContractVersion:      contractVersion,
+		ContractFingerprint:  contractFingerprint(spec),
+		PrimaryIdentityKey:   hashText(effect.EvidenceSource + "\x00" + effect.IdempotencyKey),
 		ViolationClass:       violationClass,
-		PrimaryEntityKind:    primaryKind,
-		PrimaryIdentityClass: primaryClass,
+		PrimaryEntityKind:    "effect",
+		PrimaryIdentityClass: stableKind(effect.Kind),
 		CancellationTrigger:  cancellationTrigger(cancellation),
 		CausalPath:           path,
 		AdapterMajorVersion:  context.AdapterMajorVersion,
@@ -112,40 +113,37 @@ func Build(view evidence.View, spec campaign.ContractSpec, evaluation contracts.
 	return result, nil
 }
 
-func primaryEntity(view evidence.View, evaluation contracts.Result) (*evidence.Effect, *evidence.Task) {
-	for index := range view.Effects {
-		effect := &view.Effects[index]
-		if evaluation.OffendingEffectID != "" && effect.ID == evaluation.OffendingEffectID {
-			return effect, nil
-		}
-	}
-	if evaluation.BoundaryOrder > 0 {
-		for index := range view.Effects {
-			effect := &view.Effects[index]
-			if effect.CommitOrder > evaluation.BoundaryOrder || effect.AttemptOrder > evaluation.BoundaryOrder {
-				return effect, nil
-			}
-		}
+// A contract evaluator must supply the actual counterexample. Guessing the
+// first effect after a boundary can silently change a minimized failure.
+func primaryEntity(view evidence.View, evaluation contracts.Result) *evidence.Effect {
+	if evaluation.OffendingEffectID == "" {
+		return nil
 	}
 	for index := range view.Effects {
-		if view.Effects[index].State == model.EffectCommitted {
-			return &view.Effects[index], nil
+		if view.Effects[index].ID == evaluation.OffendingEffectID {
+			return &view.Effects[index]
 		}
 	}
-	if len(view.Cancellations) > 0 {
-		for index := range view.Tasks {
-			if view.Tasks[index].ID == view.Cancellations[0].TargetTaskID {
-				return nil, &view.Tasks[index]
-			}
-		}
-	}
-	if len(view.Tasks) > 0 {
-		return nil, &view.Tasks[0]
-	}
-	return nil, nil
+	return nil
 }
 
-func classify(evaluation contracts.Result, effect *evidence.Effect, task *evidence.Task) string {
+func contractFingerprint(spec campaign.ContractSpec) string {
+	requires := append([]string{}, spec.Requires...)
+	sort.Strings(requires)
+	data, _ := json.Marshal(struct {
+		Expression string   `json:"expression"`
+		Boundary   string   `json:"boundary"`
+		Requires   []string `json:"requires"`
+	}{strings.TrimSpace(spec.Expression), spec.Boundary, requires})
+	return hashText(string(data))
+}
+
+func hashText(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func classify(evaluation contracts.Result, effect *evidence.Effect) string {
 	if effect != nil && evaluation.BoundaryOrder > 0 {
 		if effect.AttemptOrder > evaluation.BoundaryOrder {
 			return "post-cancel-effect-attempt"
@@ -153,9 +151,6 @@ func classify(evaluation contracts.Result, effect *evidence.Effect, task *eviden
 		if effect.CommitOrder > evaluation.BoundaryOrder {
 			return "post-cancel-effect-commit"
 		}
-	}
-	if task != nil && task.TerminalOrder == 0 {
-		return "orphan-task"
 	}
 	return "contract-violation"
 }

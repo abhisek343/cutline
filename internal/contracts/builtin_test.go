@@ -16,7 +16,7 @@ func TestBuiltinDetectsAuthoritativePostCancelCommit(t *testing.T) {
 
 	snapshot, effectID := contractSnapshot(t, true)
 	records := []fixtureledger.Record{{
-		EffectID: effectID, Kind: "payment.charge", Source: "fixture", CommittedAt: time.Now().UTC(),
+		EffectID: effectID, Kind: "payment.charge", IdempotencyKey: "order-1", Source: "fixture", CommittedAt: time.Now().UTC(),
 	}}
 	view := evidence.Build(evidence.BuildInput{Snapshot: snapshot, AuthoritativeEffects: records, AuthoritativeEffectsComplete: true})
 	results := EvaluateBuiltins(view, []campaign.ContractSpec{builtinSpec()})
@@ -78,12 +78,13 @@ func contractSnapshot(t *testing.T, committed bool) (ingest.Snapshot, string) {
 		base(4, model.EventCancelRequested, cancelID, "", map[string]string{"targetTask": task, "trigger": "explicit"}),
 		base(5, model.EventCancelDelivered, cancelID, "", nil),
 		base(6, model.EventCancelObserved, cancelID, task, nil),
-		base(7, model.EventDrainCompleted, task, "", nil),
 	}
 	if committed {
-		events = append(events, base(8, model.EventEffectDeclared, effectID, task, map[string]string{"kind": "payment.charge", "idempotencyKey": "order-1", "evidenceSource": "fixture"}))
-		events = append(events, base(9, model.EventEffectAttempted, effectID, task, nil), base(10, model.EventEffectCommitted, effectID, task, nil))
+		events = append(events, base(7, model.EventEffectDeclared, effectID, task, map[string]string{"kind": "payment.charge", "idempotencyKey": "order-1", "evidenceSource": "fixture"}))
+		events = append(events, base(8, model.EventEffectAttempted, effectID, task, nil), base(9, model.EventEffectCommitted, effectID, task, nil))
 	}
+	events = append(events, base(uint64(len(events)+1), model.EventTaskFinished, task, "", map[string]string{"status": string(model.TaskCancelled)}))
+	events = append(events, base(uint64(len(events)+1), model.EventDrainCompleted, task, "", nil))
 	events = append(events, base(uint64(len(events)+1), model.EventSessionEnded, session, "", nil))
 	return ingest.Snapshot{
 		RunID: model.RunID(run), AttemptID: model.AttemptID(attempt), Events: events,

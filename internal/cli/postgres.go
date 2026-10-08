@@ -10,7 +10,6 @@ import (
 
 	"github.com/abhisek343/cutline/internal/adapters/native"
 	"github.com/abhisek343/cutline/internal/adapters/temporal"
-	"github.com/abhisek343/cutline/internal/buildinfo"
 	"github.com/abhisek343/cutline/internal/campaign"
 	"github.com/abhisek343/cutline/internal/ingest"
 	"github.com/abhisek343/cutline/internal/ledger"
@@ -56,12 +55,15 @@ func runnerForCampaign(spec campaign.Campaign, baseDirectory string) (native.Run
 	if err != nil {
 		return native.Runner{}, fmt.Errorf("marshal campaign for PostgreSQL: %w", err)
 	}
-	info := buildinfo.Current()
+	adapterVersion := runner.AdapterVersion
+	if adapterVersion == "" {
+		adapterVersion = "native/" + spec.Target.Adapter + "/1"
+	}
 	runner.StoreFactory = func(ctx context.Context, runID model.RunID, attemptID model.AttemptID, maxEvents int) (ingest.Store, error) {
 		return ledger.NewPostgres(ctx, dsn, ledger.AttemptConfig{
 			RunID: runID, AttemptID: attemptID,
 			CampaignDigest: campaignDigest, CampaignName: spec.Name, CampaignJSON: campaignJSON,
-			TargetDigest: targetDigest, Adapter: spec.Target.Adapter, AdapterVersion: info.Version,
+			TargetDigest: targetDigest, Adapter: spec.Target.Adapter, AdapterVersion: adapterVersion,
 			TargetMetadata: map[string]any{"command": spec.Target.Command, "workingDirectory": spec.Target.WorkingDirectory, "temporal": spec.Target.Temporal},
 			Seed:           spec.Exploration.Seed, MaxEvents: maxEvents,
 			OperationTimeout: spec.Exploration.DrainTimeout.Value(),
@@ -90,12 +92,19 @@ func validateLocalPostgresDSN(dsn string) error {
 	if err != nil {
 		return fmt.Errorf("invalid %s: %w", postgresDSNEnvironment, err)
 	}
-	host := strings.TrimSpace(config.ConnConfig.Host)
-	if host == "" || strings.HasPrefix(host, "/") || strings.EqualFold(host, "localhost") {
-		return nil
+	hosts := []string{config.ConnConfig.Host}
+	for _, fallback := range config.ConnConfig.Fallbacks {
+		hosts = append(hosts, fallback.Host)
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return nil
+	for _, host := range hosts {
+		host = strings.TrimSpace(host)
+		if host == "" || strings.HasPrefix(host, "/") || strings.EqualFold(host, "localhost") {
+			continue
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			continue
+		}
+		return fmt.Errorf("%s must point to a loopback host or local Unix socket", postgresDSNEnvironment)
 	}
-	return fmt.Errorf("%s must point to a loopback host or local Unix socket", postgresDSNEnvironment)
+	return nil
 }

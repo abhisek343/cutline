@@ -1,0 +1,23 @@
+apiVersion: cutline.dev/v1alpha1
+kind: Campaign
+name: registered-descendant-crash-during-drain
+
+target:
+  adapter: go-test
+  command: [go, test, ./test/fixtures/sdkdrain, -run, ^TestCutlineTarget$, -count=1, -args, -cutline-drain-mode=crash]
+
+exploration:
+  strategy: single-cut
+  maxSchedules: 1
+  maxPointVisits: 10
+  scheduleTimeout: 30s
+  drainTimeout: 1s
+  cancelAt: [root-return]
+  seed: 1
+
+contracts:
+  - name: registered-tasks-drained
+    version: 1
+    severity: critical
+    requires: [drain.registered_tasks]
+    expression: '!tasks.exists(t, !t.isTerminalAt(run.drainedAt))'

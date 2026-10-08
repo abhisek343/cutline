@@ -31,7 +31,7 @@ workers or infer business-effect commits from workflow history.
 ### Negative
 
 - a separate container integration gate is required;
-- full checkpoint-driven Temporal campaign execution remains future work;
+- local checkpoint campaigns launch a command worker using the native control protocol; this does not provide arbitrary Temporal history replay;
 - external effects still require worker-provided authoritative evidence.
 
 ## Alternatives considered
@@ -44,5 +44,6 @@ workers or infer business-effect commits from workflow history.
 
 ## Revisit when
 
-A Temporal worker instrumentation protocol and deterministic cancellation
-scheduler are ready to be added without weakening evidence semantics.
+Remote or additional workflow engine support is proposed. Local checkpoint
+campaigns are now implemented alongside read-only history inspection; the
+reference fixture verifies real cancellation propagation before business effects.

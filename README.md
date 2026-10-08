@@ -120,7 +120,7 @@ For a local PostgreSQL instance, run `docker compose up -d postgres`. The databa
 
 ## Project status
 
-The native Go workflow is complete: discovery, bounded exploration, contract evaluation, minimization, replay, and reporting all run against the reference fixture. PostgreSQL-backed evidence and local Temporal history ingestion are also implemented. Temporal campaigns run command-launched local workers through the same checkpoint-driven execution loop as native targets.
+The native Go workflow implements discovery, bounded exploration, contract evaluation, minimization, replay, and reporting. Release readiness requires the exact-commit verification gates in [releasing](docs/releasing.md), including saved-capsule replay and packaged CLI checks. PostgreSQL-backed evidence and local Temporal history ingestion are also implemented. Temporal campaigns run command-launched local workers through the same checkpoint-driven execution loop as native targets.
 
 ## Documentation
 
@@ -150,3 +150,5 @@ To reproduce locally:
     ./bin/cutline run --campaign test/fixtures/checkout/campaign-clean.yaml
 
 The workflow is defined in .github/workflows/demo-video.yml. The recording is a deterministic CLI demonstration, not a claim that arbitrary concurrent programs are fully verified.
+
+The SDK drains registered descendants within the campaign's `drainTimeout`; missing terminal evidence remains inconclusive. Minimization requires a supported explicit effect witness. Valid general CEL assertions may report violations without an automatically minimizable witness; see [contracts](docs/contracts.md).

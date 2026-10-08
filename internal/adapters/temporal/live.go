@@ -91,12 +91,35 @@ func FetchFrom(ctx context.Context, source historySource, options LiveOptions) (
 	}
 	history := WorkflowHistory{RunID: model.RunID(run), AttemptID: model.AttemptID(attempt), SessionID: model.SessionID(session), WorkflowID: options.WorkflowID}
 	iterator := source.GetWorkflowHistory(ctx, options.WorkflowID, options.RunID, false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	activities := make(map[int64]string)
+	var previousID int64
 	for iterator.HasNext() {
 		event, err := iterator.Next()
 		if err != nil {
 			return ingest.Snapshot{}, fmt.Errorf("read Temporal workflow history: %w", err)
 		}
-		history.Events = append(history.Events, translateSDKEvent(event, options))
+		raw := translateSDKEvent(event, options)
+		if event.GetEventId() != previousID+1 {
+			history.Events = append(history.Events, HistoryEvent{ID: raw.ID, Type: "temporal.history_sequence_gap", ObservedAt: raw.ObservedAt})
+		}
+		previousID = event.GetEventId()
+		if raw.Type == "activity.scheduled" {
+			activityID := raw.Attributes["temporal.activityId"]
+			if activityID == "" {
+				raw.Type = "temporal.activity_missing_identity"
+			} else {
+				activities[event.GetEventId()] = activityID + "/" + raw.ID
+				raw.Attributes["taskId"] = activities[event.GetEventId()]
+			}
+		} else if strings.HasPrefix(raw.Type, "activity.") {
+			scheduledID, _ := strconv.ParseInt(raw.Attributes["temporal.scheduledEventId"], 10, 64)
+			if taskID, ok := activities[scheduledID]; ok {
+				raw.Attributes["taskId"] = taskID
+			} else {
+				raw.Type = "temporal.activity_missing_schedule"
+			}
+		}
+		history.Events = append(history.Events, raw)
 	}
 	if len(history.Events) == 0 {
 		return ingest.Snapshot{}, fmt.Errorf("Temporal workflow history is empty")
@@ -137,17 +160,30 @@ func translateSDKEvent(event *historypb.HistoryEvent, options LiveOptions) Histo
 		raw.Type = "workflow.signaled"
 	case enums.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
 		raw.Type = "activity.scheduled"
-		attributes["taskId"] = event.GetActivityTaskScheduledEventAttributes().GetActivityId()
+		attributes["temporal.activityId"] = event.GetActivityTaskScheduledEventAttributes().GetActivityId()
+		attributes["temporal.scheduledEventId"] = raw.ID
 	case enums.EVENT_TYPE_ACTIVITY_TASK_STARTED:
 		raw.Type = "activity.started"
+		attributes["temporal.scheduledEventId"] = strconv.FormatInt(event.GetActivityTaskStartedEventAttributes().GetScheduledEventId(), 10)
+		attributes["temporal.attempt"] = strconv.FormatInt(int64(event.GetActivityTaskStartedEventAttributes().GetAttempt()), 10)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
 		raw.Type = "activity.completed"
+		attributes["temporal.scheduledEventId"] = strconv.FormatInt(event.GetActivityTaskCompletedEventAttributes().GetScheduledEventId(), 10)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_FAILED:
 		raw.Type = "activity.failed"
+		attributes["temporal.scheduledEventId"] = strconv.FormatInt(event.GetActivityTaskFailedEventAttributes().GetScheduledEventId(), 10)
+		attributes["temporal.retryState"] = event.GetActivityTaskFailedEventAttributes().GetRetryState().String()
 	case enums.EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED:
 		raw.Type = "activity.cancel_requested"
+		attributes["temporal.scheduledEventId"] = strconv.FormatInt(event.GetActivityTaskCancelRequestedEventAttributes().GetScheduledEventId(), 10)
 	case enums.EVENT_TYPE_ACTIVITY_TASK_CANCELED:
 		raw.Type = "activity.canceled"
+		attributes["temporal.scheduledEventId"] = strconv.FormatInt(event.GetActivityTaskCanceledEventAttributes().GetScheduledEventId(), 10)
+	case enums.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT:
+		raw.Type = "activity.timed_out"
+		attributes["temporal.scheduledEventId"] = strconv.FormatInt(event.GetActivityTaskTimedOutEventAttributes().GetScheduledEventId(), 10)
+		attributes["temporal.retryState"] = event.GetActivityTaskTimedOutEventAttributes().GetRetryState().String()
+		attributes["temporal.startedEventId"] = strconv.FormatInt(event.GetActivityTaskTimedOutEventAttributes().GetStartedEventId(), 10)
 	}
 	return raw
 }

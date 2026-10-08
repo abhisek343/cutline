@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,36 +15,54 @@ import (
 )
 
 const (
-	envNetwork      = "CUTLINE_NETWORK"
-	envEndpoint     = "CUTLINE_ENDPOINT"
-	envToken        = "CUTLINE_TOKEN"
-	envRunID        = "CUTLINE_RUN_ID"
-	envAttemptID    = "CUTLINE_ATTEMPT_ID"
-	envSessionID    = "CUTLINE_SESSION_ID"
-	evidenceTimeout = 5 * time.Second
+	envNetwork          = "CUTLINE_NETWORK"
+	envEndpoint         = "CUTLINE_ENDPOINT"
+	envToken            = "CUTLINE_TOKEN"
+	envRunID            = "CUTLINE_RUN_ID"
+	envAttemptID        = "CUTLINE_ATTEMPT_ID"
+	envSessionID        = "CUTLINE_SESSION_ID"
+	envDrainTimeout     = "CUTLINE_DRAIN_TIMEOUT"
+	evidenceTimeout     = 5 * time.Second
+	defaultDrainTimeout = 10 * time.Second
 )
 
 type runtimeSession struct {
-	client    *control.Client
-	runID     model.RunID
-	attemptID model.AttemptID
-	sessionID model.SessionID
-	startedAt time.Time
-	entities  atomic.Uint64
+	client       *control.Client
+	runID        model.RunID
+	attemptID    model.AttemptID
+	sessionID    model.SessionID
+	startedAt    time.Time
+	entities     atomic.Uint64
+	drainTimeout time.Duration
+
+	tasksMu   sync.Mutex
+	liveTasks map[model.TaskID]bool
+	drained   chan struct{}
+	drainErr  error
+	stopped   bool
 }
 
 type scopeContextKey struct{}
 
 type scopeState struct {
-	session *runtimeSession
-	id      model.TaskID
-	cancel  context.CancelCauseFunc
+	session  *runtimeSession
+	id       model.TaskID
+	parentID model.TaskID
+	cancel   context.CancelCauseFunc
 }
 
 func sessionFromEnvironment(ctx context.Context) (*runtimeSession, bool, error) {
 	endpoint := os.Getenv(envEndpoint)
 	if endpoint == "" {
 		return nil, false, nil
+	}
+	drainTimeout := defaultDrainTimeout
+	if value := os.Getenv(envDrainTimeout); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil || parsed <= 0 {
+			return nil, true, fmt.Errorf("%w: %s must be a positive duration", ErrControlUnavailable, envDrainTimeout)
+		}
+		drainTimeout = parsed
 	}
 	config := control.ClientConfig{
 		Network:   os.Getenv(envNetwork),
@@ -73,12 +92,80 @@ func sessionFromEnvironment(ctx context.Context) (*runtimeSession, bool, error) 
 		return nil, true, fmt.Errorf("%w: %v", ErrControlUnavailable, err)
 	}
 	return &runtimeSession{
-		client:    client,
-		runID:     config.RunID,
-		attemptID: config.AttemptID,
-		sessionID: config.SessionID,
-		startedAt: time.Now(),
+		client:       client,
+		runID:        config.RunID,
+		attemptID:    config.AttemptID,
+		sessionID:    config.SessionID,
+		startedAt:    time.Now(),
+		drainTimeout: drainTimeout,
+		liveTasks:    make(map[model.TaskID]bool),
+		drained:      make(chan struct{}),
 	}, true, nil
+}
+
+// reserveTask closes the registration-versus-return race: a child is counted
+// before sending its registration, and only a still-live parent can add work.
+func (s *runtimeSession) reserveTask(id, parentID model.TaskID) error {
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	if s.stopped {
+		return ErrTaskScopeClosed
+	}
+	if parentID != "" {
+		if accepting := s.liveTasks[parentID]; !accepting {
+			return ErrTaskScopeClosed
+		}
+	}
+	select {
+	case <-s.drained:
+		return ErrTaskScopeClosed
+	default:
+	}
+	s.liveTasks[id] = true
+	return nil
+}
+
+func (s *runtimeSession) closeTaskScope(id model.TaskID) {
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	if _, live := s.liveTasks[id]; live {
+		s.liveTasks[id] = false
+	}
+}
+
+func (s *runtimeSession) close() {
+	s.tasksMu.Lock()
+	s.stopped = true
+	s.tasksMu.Unlock()
+	_ = s.client.Close()
+}
+
+// finishTask counts a task as drained only after its terminal event was
+// acknowledged. A failed evidence call prevents a successful drain claim.
+func (s *runtimeSession) finishTask(id model.TaskID, evidenceErr error) {
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	if _, live := s.liveTasks[id]; !live {
+		return
+	}
+	delete(s.liveTasks, id)
+	s.drainErr = errors.Join(s.drainErr, evidenceErr)
+	if len(s.liveTasks) == 0 {
+		close(s.drained)
+	}
+}
+
+func (s *runtimeSession) waitForDrain() error {
+	timer := time.NewTimer(s.drainTimeout)
+	defer timer.Stop()
+	select {
+	case <-s.drained:
+		s.tasksMu.Lock()
+		defer s.tasksMu.Unlock()
+		return s.drainErr
+	case <-timer.C:
+		return ErrDrainTimeout
+	}
 }
 
 func (s *runtimeSession) nextEntity(prefix string, parts ...string) (string, error) {
