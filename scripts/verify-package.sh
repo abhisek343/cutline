@@ -15,7 +15,10 @@ tar -xzf "$archives/cutline_${version}_linux_amd64.tar.gz" -C "$work"
 binary="$work/cutline_${version}_linux_amd64/cutline"
 test -x "$binary"
 test -s "$work/cutline_${version}_linux_amd64/BUILDINFO"
-"$binary" --version
+reported_version="$("$binary" --version)"
+test "$reported_version" = "cutline version $version"
+grep -Fx "version=$version" "$work/cutline_${version}_linux_amd64/BUILDINFO"
+printf '%s\n' "$reported_version"
 cd "$root"
 "$binary" run --campaign test/fixtures/checkout/campaign-clean.yaml --json > "$work/clean.json"
 set +e
