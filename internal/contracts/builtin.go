@@ -3,10 +3,10 @@ package contracts
 import (
 	"fmt"
 	"regexp"
+	"sort"
 
 	"github.com/abhisek343/cutline/internal/campaign"
 	"github.com/abhisek343/cutline/internal/evidence"
-	"github.com/abhisek343/cutline/internal/model"
 )
 
 var noEffectExpression = regexp.MustCompile(`^builtin\.no_effect_after_cancel_observed\("([A-Za-z0-9._:/-]+)"\)$`)
@@ -23,6 +23,10 @@ func EvaluateBuiltins(view evidence.View, specs []campaign.ContractSpec) []Resul
 
 func evaluateBuiltin(view evidence.View, spec campaign.ContractSpec) Result {
 	result := Result{Contract: spec.Name}
+	if spec.Version < 0 || spec.Version > EnvironmentVersion {
+		result.Status, result.Message = StatusInvalid, "unsupported built-in contract version"
+		return result
+	}
 	if !view.Complete() {
 		result.Status = StatusInconclusive
 		if len(view.Issues) > 0 {
@@ -33,6 +37,16 @@ func evaluateBuiltin(view evidence.View, spec campaign.ContractSpec) Result {
 			result.Message = "evidence is incomplete"
 		}
 		return result
+	}
+	if unresolvedEffect(view) {
+		result.Status, result.Message = StatusInconclusive, "effect dependency outcome is unknown"
+		return result
+	}
+	for _, required := range spec.Requires {
+		if !view.HasCapability(required) {
+			result.Status, result.Message = StatusInconclusive, "required capability is missing: "+required
+			return result
+		}
 	}
 	match := noEffectExpression.FindStringSubmatch(spec.Expression)
 	if match == nil {
@@ -54,13 +68,23 @@ func evaluateBuiltin(view evidence.View, spec campaign.ContractSpec) Result {
 		return result
 	}
 
-	for _, effect := range view.Effects {
-		if effect.Kind != effectKind || effect.State != model.EffectCommitted {
+	effects := append([]evidence.Effect(nil), view.Effects...)
+	sort.Slice(effects, func(i, j int) bool {
+		if effects[i].IdempotencyKey != effects[j].IdempotencyKey {
+			return effects[i].IdempotencyKey < effects[j].IdempotencyKey
+		}
+		return effects[i].EvidenceSource < effects[j].EvidenceSource
+	})
+	for _, effect := range effects {
+		if effect.Kind != effectKind || effect.CommitOrder == 0 {
 			continue
 		}
 		if effect.CommitOrder > observedOrder {
 			result.Status = StatusViolation
 			result.Message = fmt.Sprintf("%s committed after cancellation was observed", effectKind)
+			if effect.IdempotencyKey == "" {
+				result.Message += "; minimization unavailable: effect has no stable idempotency key"
+			}
 			result.OffendingEffectID = effect.ID
 			result.BoundaryOrder = observedOrder
 			result.EffectOrder = effect.CommitOrder

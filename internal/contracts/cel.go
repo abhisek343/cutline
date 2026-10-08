@@ -3,6 +3,7 @@ package contracts
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/abhisek343/cutline/internal/campaign"
@@ -30,6 +31,7 @@ func NewCELEngine(costLimit uint64) (*CELEngine, error) {
 		costLimit = DefaultCostLimit
 	}
 	env, err := cel.NewEnv(
+		cel.EnableMacroCallTracking(),
 		cel.Variable("effects", cel.ListType(cel.DynType)),
 		cel.Variable("tasks", cel.ListType(cel.DynType)),
 		cel.Variable("resources", cel.ListType(cel.DynType)),
@@ -82,6 +84,10 @@ func (e *CELEngine) Evaluate(view evidence.View, spec campaign.ContractSpec) Res
 	if !view.Complete() {
 		return inconclusive(view, result)
 	}
+	if unresolvedEffect(view) {
+		result.Status, result.Message = StatusInconclusive, "effect dependency outcome is unknown"
+		return result
+	}
 	for _, required := range spec.Requires {
 		if !view.HasCapability(required) {
 			result.Status = StatusInconclusive
@@ -132,8 +138,101 @@ func (e *CELEngine) Evaluate(view evidence.View, spec campaign.ContractSpec) Res
 		result.Status, result.Message = StatusPass, "CEL contract passed"
 	} else {
 		result.Status, result.Message = StatusViolation, "CEL contract evaluated to false"
+		if id := e.effectWitness(view, ast); id != "" {
+			result.OffendingEffectID = id
+			for _, effect := range view.Effects {
+				if effect.ID == id {
+					result.EffectOrder = effect.CommitOrder
+					if effect.IdempotencyKey == "" {
+						result.Message += "; minimization unavailable: effect has no stable idempotency key"
+					}
+				}
+			}
+		} else {
+			result.Message += "; minimization unavailable: expression has no supported effect witness"
+		}
 	}
 	return result
+}
+
+// effectWitness supports exactly !effects.exists(e, predicate). The predicate
+// is evaluated against the original full activation, not a filtered evidence
+// set: nested quantifiers and aggregate references retain their meaning.
+// General CEL expressions do not necessarily have an entity counterexample.
+func (e *CELEngine) effectWitness(view evidence.View, ast *cel.Ast) string {
+	root := ast.Expr().GetCallExpr()
+	if root == nil || root.Function != "!_" || len(root.Args) != 1 {
+		return ""
+	}
+	macro := ast.SourceInfo().GetMacroCalls()[root.Args[0].Id].GetCallExpr()
+	if macro == nil || macro.Function != "exists" || macro.Target.GetIdentExpr().GetName() != "effects" || len(macro.Args) != 2 {
+		return ""
+	}
+	name := macro.Args[0].GetIdentExpr().GetName()
+	if name == "" {
+		return ""
+	}
+	env, err := e.env.Extend(cel.Variable(name, cel.DynType))
+	if err != nil {
+		return ""
+	}
+	parsed, err := cel.AstToParsedExpr(ast)
+	if err != nil {
+		return ""
+	}
+	parsed.Expr = macro.Args[1]
+	checked, issues := env.Check(cel.ParsedExprToAst(parsed))
+	if issues.Err() != nil {
+		return ""
+	}
+	program, err := env.Program(checked, cel.CostTracking(nil), cel.CostLimit(e.costLimit), cel.InterruptCheckFrequency(100))
+	if err != nil {
+		return ""
+	}
+	values := activation(view)
+	candidates := make([]int, len(view.Effects))
+	for index := range candidates {
+		candidates[index] = index
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := view.Effects[candidates[i]], view.Effects[candidates[j]]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.IdempotencyKey != right.IdempotencyKey {
+			return left.IdempotencyKey < right.IdempotencyKey
+		}
+		return left.EvidenceSource < right.EvidenceSource
+	})
+	remaining := e.costLimit
+	for _, index := range candidates {
+		values[name] = values["effects"].([]any)[index]
+		value, details, err := program.Eval(values)
+		cost := uint64(1)
+		if details != nil && details.ActualCost() != nil && *details.ActualCost() > cost {
+			cost = *details.ActualCost()
+		}
+		if cost > remaining {
+			return ""
+		}
+		remaining -= cost
+		if err == nil && value == types.True {
+			return view.Effects[index].ID
+		}
+		if remaining == 0 {
+			return ""
+		}
+	}
+	return ""
+}
+
+func unresolvedEffect(view evidence.View) bool {
+	for _, effect := range view.Effects {
+		if effect.State == model.EffectUnknown || effect.State == model.EffectAttempted {
+			return true
+		}
+	}
+	return false
 }
 
 func inconclusive(view evidence.View, result Result) Result {
@@ -164,10 +263,10 @@ func activation(view evidence.View) map[string]any {
 	effects := make([]any, 0, len(view.Effects))
 	for _, effect := range view.Effects {
 		effects = append(effects, map[string]any{
-			"id": effect.ID, "kind": effect.Kind, "committed": effect.State == model.EffectCommitted,
+			"id": effect.ID, "kind": effect.Kind, "committed": effect.CommitOrder > 0,
 			"startedAt": eventTime(view, effect.ID, "attempted"), "committedAt": eventTime(view, effect.ID, "committed"),
 			"ownerTask": effect.OwnerTaskID, "idempotencyKey": effect.IdempotencyKey,
-			"compensated": effect.State == model.EffectCompensated, "terminal": effect.TerminalOrder > 0,
+			"compensated": effect.State == model.EffectCompensated, "compensatedAt": eventTime(view, effect.ID, "compensated"), "terminal": effect.TerminalOrder > 0,
 		})
 	}
 	tasks := make([]any, 0, len(view.Tasks))
@@ -187,7 +286,7 @@ func activation(view evidence.View) map[string]any {
 }
 
 func eventTime(view evidence.View, entityID, phase string) time.Time {
-	wanted := map[string]model.EventType{"requested": model.EventCancelRequested, "delivered": model.EventCancelDelivered, "observed": model.EventCancelObserved, "attempted": model.EventEffectAttempted, "committed": model.EventEffectCommitted, "finished": model.EventTaskFinished, "released": model.EventResourceReleased}[phase]
+	wanted := map[string]model.EventType{"requested": model.EventCancelRequested, "delivered": model.EventCancelDelivered, "observed": model.EventCancelObserved, "attempted": model.EventEffectAttempted, "committed": model.EventEffectCommitted, "compensated": model.EventEffectCompensated, "finished": model.EventTaskFinished, "released": model.EventResourceReleased}[phase]
 	for _, event := range view.Events {
 		if event.EntityID == entityID && event.Type == wanted {
 			return event.ObservedAt
@@ -226,11 +325,14 @@ func timestampNative(value ref.Val) (time.Time, bool) {
 func startedAfter(effect, boundary ref.Val) ref.Val {
 	values := mapNative(effect)
 	when, ok := timestampNative(boundary)
-	if values == nil || !ok {
-		return types.Bool(false)
+	if values == nil || !ok || when.IsZero() {
+		return types.NewErr("startedAfter requires a recorded boundary timestamp")
 	}
 	at, ok := values["startedAt"].(time.Time)
-	return types.Bool(ok && !at.IsZero() && at.After(when))
+	if !ok || at.IsZero() {
+		return types.NewErr("startedAfter requires a recorded effect attempt timestamp")
+	}
+	return types.Bool(at.After(when))
 }
 
 func descendsFrom(task, ancestor ref.Val) ref.Val {
@@ -251,19 +353,34 @@ func descendsFrom(task, ancestor ref.Val) ref.Val {
 	return types.Bool(false)
 }
 
-func isTerminalAt(task, _ ref.Val) ref.Val {
-	values := mapNative(task)
-	return types.Bool(values != nil && values["terminal"] == true)
+// "At" is inclusive; "Before" is strict. A recorded lifecycle outcome
+// without its timestamp, or a missing boundary, is unknown rather than false.
+func lifecycleAt(entity, boundary ref.Val, state, phase string, inclusive bool) ref.Val {
+	values := mapNative(entity)
+	when, ok := timestampNative(boundary)
+	if values == nil || !ok || when.IsZero() {
+		return types.NewErr("%s requires a recorded boundary timestamp", phase)
+	}
+	if values[state] != true {
+		return types.False
+	}
+	at, ok := values[phase].(time.Time)
+	if !ok || at.IsZero() {
+		return types.NewErr("%s requires a recorded lifecycle timestamp", phase)
+	}
+	return types.Bool(at.Before(when) || (inclusive && at.Equal(when)))
 }
 
-func wasCompensatedBefore(effect, _ ref.Val) ref.Val {
-	values := mapNative(effect)
-	return types.Bool(values != nil && values["compensated"] == true)
+func isTerminalAt(task, boundary ref.Val) ref.Val {
+	return lifecycleAt(task, boundary, "terminal", "terminalAt", true)
 }
 
-func isReleasedAt(resource, _ ref.Val) ref.Val {
-	values := mapNative(resource)
-	return types.Bool(values != nil && values["released"] == true)
+func wasCompensatedBefore(effect, boundary ref.Val) ref.Val {
+	return lifecycleAt(effect, boundary, "compensated", "compensatedAt", false)
+}
+
+func isReleasedAt(resource, boundary ref.Val) ref.Val {
+	return lifecycleAt(resource, boundary, "released", "releasedAt", true)
 }
 
 func expiredSafely(resource ref.Val) ref.Val {

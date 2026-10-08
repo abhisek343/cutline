@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -85,6 +87,7 @@ type Execution struct {
 }
 
 type Input struct {
+	TargetDigest        string
 	Campaign            campaign.Campaign
 	CampaignYAML        []byte
 	RunID               model.RunID
@@ -143,10 +146,7 @@ func Build(input Input) (Capsule, error) {
 	if err != nil {
 		return Capsule{}, err
 	}
-	targetDigest, err := input.Campaign.TargetDigest()
-	if err != nil {
-		return Capsule{}, err
-	}
+	targetDigest := input.TargetDigest
 	build := input.BuildInfo
 	if build.Version == "" {
 		build = buildinfo.Current()
@@ -223,6 +223,9 @@ func Build(input Input) (Capsule, error) {
 	if err := addJSON("evaluation.json", input.Evaluations); err != nil {
 		return Capsule{}, err
 	}
+	if err := addJSON("execution.json", input.Execution); err != nil {
+		return Capsule{}, err
+	}
 	if err := addJSON("schedule.json", minimizedSchedule); err != nil {
 		return Capsule{}, err
 	}
@@ -273,6 +276,12 @@ func (c Capsule) WriteDirectory(destination string) error {
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		return fmt.Errorf("create capsule directory: %w", err)
 	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.RemoveAll(destination)
+		}
+	}()
 	paths := sortedKeys(c.Files)
 	for _, path := range paths {
 		full, err := safeJoin(destination, path)
@@ -286,6 +295,7 @@ func (c Capsule) WriteDirectory(destination string) error {
 			return fmt.Errorf("write capsule artifact %s: %w", path, err)
 		}
 	}
+	complete = true
 	return nil
 }
 
@@ -304,6 +314,12 @@ func ValidateDirectory(root string) (Manifest, error) {
 	}
 	if manifest.SchemaVersion != SchemaVersion {
 		return Manifest{}, fmt.Errorf("unsupported capsule schema version %d", manifest.SchemaVersion)
+	}
+	if manifest.FailureSignature.Version != signature.Version || manifest.FailureSignature.SchemaMajorVersion != model.EventSchemaVersion {
+		return Manifest{}, fmt.Errorf("unsupported failure signature or event schema version: signature=%d schema=%d", manifest.FailureSignature.Version, manifest.FailureSignature.SchemaMajorVersion)
+	}
+	if manifest.TargetDigest == "" {
+		return Manifest{}, fmt.Errorf("capsule has no executable target identity")
 	}
 	if manifest.CapsuleID != artifactSetDigest(manifest.Artifacts) {
 		return Manifest{}, fmt.Errorf("capsule ID does not match artifact set")
@@ -330,11 +346,42 @@ func ValidateDirectory(root string) (Manifest, error) {
 		if len(data) != artifact.SizeBytes || digestBytes(data) != artifact.Digest {
 			return Manifest{}, fmt.Errorf("capsule artifact integrity failure: %s", artifact.Path)
 		}
+		if artifact.Path == "events.jsonl" {
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			count := 0
+			for {
+				var record ingest.ExportRecord
+				if err := decoder.Decode(&record); err == io.EOF {
+					break
+				} else if err != nil {
+					return Manifest{}, fmt.Errorf("decode capsule event: %w", err)
+				}
+				if record.Kind != "event" || record.Event == nil {
+					return Manifest{}, fmt.Errorf("capsule contains incomplete or invalid event record")
+				}
+				event := record.Event
+				if err := event.Validate(); err != nil {
+					return Manifest{}, fmt.Errorf("unsupported or invalid capsule event: %w", err)
+				}
+				count++
+				if event.RunID != manifest.RunID || event.AttemptID != manifest.AttemptID || event.CanonicalOrder != uint64(count) {
+					return Manifest{}, fmt.Errorf("capsule event identity or canonical order does not match execution")
+				}
+			}
+			if count == 0 {
+				return Manifest{}, fmt.Errorf("capsule has no canonical events")
+			}
+		}
 		total += len(data)
 		if total > maxCapsuleBytes {
 			return Manifest{}, fmt.Errorf("capsule exceeds %d bytes", maxCapsuleBytes)
 		}
 		paths[artifact.Path] = artifact.Digest
+	}
+	for _, required := range []string{"campaign.yaml", "target.json", "dependencies.json", "events.jsonl", "effects.json", "graph.json", "evaluation.json", "execution.json", "schedule.json", "minimization.json", "report/data.json", "report/index.html", "replay/README.md"} {
+		if _, ok := seen[required]; !ok {
+			return Manifest{}, fmt.Errorf("capsule is missing required artifact %s", required)
+		}
 	}
 	checksumPath, err := safeFile(root, "checksums.sha256")
 	if err != nil {
@@ -381,20 +428,52 @@ func (in Input) validate() error {
 	if err := model.ValidateID(string(in.AttemptID)); err != nil {
 		return fmt.Errorf("attempt ID: %w", err)
 	}
+	if in.TargetDigest == "" {
+		return fmt.Errorf("capsules require an executable target digest")
+	}
 	if in.Execution.Status != "violation" {
 		return fmt.Errorf("capsules require a violation result")
 	}
-	if len(in.Snapshot.Events) == 0 || !in.View.Complete() {
+	if len(in.Snapshot.Events) == 0 || !in.Snapshot.Complete() || !in.View.Complete() {
 		return fmt.Errorf("capsules require complete evidence")
 	}
 	if len(in.Signatures) == 0 && in.FailureSignature.Digest == "" {
 		return fmt.Errorf("capsules require a failure signature")
+	}
+	if in.failureSignature().Version != signature.Version || in.failureSignature().SchemaMajorVersion != model.EventSchemaVersion {
+		return fmt.Errorf("capsules require supported signature and event schema versions")
+	}
+	for index, event := range in.Snapshot.Events {
+		if err := event.Validate(); err != nil {
+			return fmt.Errorf("capsule event: %w", err)
+		}
+		if event.RunID != in.RunID || event.AttemptID != in.AttemptID || event.CanonicalOrder != uint64(index+1) {
+			return fmt.Errorf("capsule event identity or canonical order does not match execution")
+		}
+	}
+	if !reflect.DeepEqual(in.View.Events, in.Snapshot.Events) {
+		return fmt.Errorf("capsule view does not contain final execution events")
 	}
 	if in.Minimization == nil || !in.Minimization.Stable {
 		return fmt.Errorf("capsules require stable minimization")
 	}
 	if in.Minimization.Target.Digest != "" && in.Minimization.Target.Digest != in.failureSignature().Digest {
 		return fmt.Errorf("minimization target does not match failure signature")
+	}
+	if !reflect.DeepEqual(in.Schedule, in.Minimization.Minimized) {
+		return fmt.Errorf("capsule evidence schedule does not match minimized schedule; rerun final candidate")
+	}
+	if in.Snapshot.RunID != in.RunID || in.Snapshot.AttemptID != in.AttemptID || in.View.RunID != in.RunID || in.View.AttemptID != in.AttemptID {
+		return fmt.Errorf("capsule evidence identity does not match execution")
+	}
+	observed := false
+	for _, value := range in.Signatures {
+		if value.Digest == in.failureSignature().Digest {
+			observed = true
+		}
+	}
+	if !observed {
+		return fmt.Errorf("capsule failure signature was not observed in final execution")
 	}
 	return nil
 }
@@ -430,7 +509,11 @@ func makeMinimizationRecord(result *minimize.Result) minimizationRecord {
 			record.ObservedSignatures = append(record.ObservedSignatures, attempt.SignatureDigest)
 		}
 	}
-	record.Confirmations = len(result.Attempts)
+	for _, attempt := range result.Attempts {
+		if reflect.DeepEqual(attempt.Candidate, result.Minimized) {
+			record.Confirmations++
+		}
+	}
 	switch {
 	case result.Stable:
 		record.TerminationReason = "confirmed"

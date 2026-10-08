@@ -55,8 +55,8 @@ func (c Campaign) Digest() (string, error) {
 }
 
 // TargetDigest identifies the adapter and command independently from the
-// campaign contracts. It is stored with every attempt so a replay can reject
-// evidence produced by a different target build.
+// campaign contracts. This descriptor is not a target build identity; capsules
+// use ExecutionDigest to identify executable content.
 func (c Campaign) TargetDigest() (string, error) {
 	target := c.Target
 	data, err := json.Marshal(target)

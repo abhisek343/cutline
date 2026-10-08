@@ -4,10 +4,12 @@ import "testing"
 
 func TestValidateLocalPostgresDSN(t *testing.T) {
 	tests := map[string]bool{
-		"postgres://u:p@127.0.0.1:5432/db":      true,
-		"postgres://u:p@localhost:5432/db":      true,
-		"postgres://u:p@[::1]:5432/db":          true,
-		"postgres://u:p@db.example.com:5432/db": false,
+		"postgres://u:p@127.0.0.1:5432/db":                                    true,
+		"postgres://u:p@localhost:5432/db":                                    true,
+		"postgres://u:p@[::1]:5432/db":                                        true,
+		"postgres://u:p@db.example.com:5432/db":                               false,
+		"host=127.0.0.1,db.example.com port=5432 user=u password=p dbname=db": false,
+		"host=127.0.0.1,::1 port=5432 user=u password=p dbname=db":            true,
 	}
 	for dsn, want := range tests {
 		if got := validateLocalPostgresDSN(dsn) == nil; got != want {

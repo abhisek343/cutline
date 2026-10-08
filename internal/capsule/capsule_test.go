@@ -22,7 +22,7 @@ func TestBuildWriteAndValidateCapsule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capsule.Manifest.CapsuleID == "" || len(capsule.Manifest.Artifacts) != 12 {
+	if capsule.Manifest.CapsuleID == "" || len(capsule.Manifest.Artifacts) != 13 {
 		t.Fatalf("manifest = %#v", capsule.Manifest)
 	}
 	if strings.Contains(string(capsule.Files["campaign.yaml"]), "secret") || capsule.Manifest.RedactionCount == 0 {
@@ -83,14 +83,98 @@ func capsuleInput(t *testing.T) Input {
 	}
 	schedule := explorer.Schedule{ID: "schedule-original", Ordinal: 1, Strategy: "single-cut", CancelAt: "cut", ReleasePrefix: []string{"before"}}
 	minimized := schedule.WithReleasePrefix(nil)
-	sig := signature.Signature{Version: 1, Digest: "sha256:" + strings.Repeat("a", 64), Contract: "rule", ContractVersion: 1, ViolationClass: "post-cancel-effect-attempt"}
+	sig := signature.Signature{Version: signature.Version, SchemaMajorVersion: model.EventSchemaVersion, Digest: "sha256:" + strings.Repeat("a", 64), Contract: "rule", ContractVersion: 1, ViolationClass: "post-cancel-effect-attempt"}
 	runID, attemptID := model.RunID(runValue), model.AttemptID(attemptValue)
 	return Input{
-		Campaign: spec, CampaignYAML: raw, RunID: runID, AttemptID: attemptID, Execution: Execution{Status: "violation"}, Schedule: schedule,
+		TargetDigest: "sha256:compiled-test-target", Campaign: spec, CampaignYAML: raw, RunID: runID, AttemptID: attemptID, Execution: Execution{Status: "violation"}, Schedule: minimized,
 		Snapshot:   ingest.Snapshot{RunID: runID, AttemptID: attemptID, Events: []model.Event{event}},
 		View:       evidence.View{RunID: runID, AttemptID: attemptID, Events: []model.Event{event}, Capabilities: []string{evidence.CapabilityCancellationObserved}},
 		Signatures: []signature.Signature{sig}, FailureSignature: sig,
 		Minimization: &minimize.Result{Original: schedule, Minimized: minimized, Target: sig, Attempts: []minimize.Attempt{{Candidate: minimized, Reproduced: true, SignatureDigest: sig.Digest}}, Stable: true},
 		Redactions:   []Redaction{{Label: "token", Value: "secret"}}, CreatedAt: time.Unix(10, 0).UTC(),
+	}
+}
+
+func TestBuildRefusesEvidenceFromDifferentScheduleOrFailure(t *testing.T) {
+	t.Run("original evidence with minimized schedule", func(t *testing.T) {
+		input := capsuleInput(t)
+		input.Schedule = input.Minimization.Original
+		if _, err := Build(input); err == nil || !strings.Contains(err.Error(), "rerun final candidate") {
+			t.Fatalf("accepted original evidence: %v", err)
+		}
+	})
+	t.Run("signature not observed", func(t *testing.T) {
+		input := capsuleInput(t)
+		input.Signatures = []signature.Signature{{Digest: "sha256:different"}}
+		if _, err := Build(input); err == nil || !strings.Contains(err.Error(), "not observed") {
+			t.Fatalf("accepted different failure: %v", err)
+		}
+	})
+	t.Run("wrong execution identity", func(t *testing.T) {
+		input := capsuleInput(t)
+		input.View.AttemptID = "attempt_other"
+		if _, err := Build(input); err == nil || !strings.Contains(err.Error(), "identity") {
+			t.Fatalf("accepted unrelated execution: %v", err)
+		}
+	})
+}
+
+func TestValidateRefusesUnsupportedSignatureBeforeReplay(t *testing.T) {
+	input := capsuleInput(t)
+	built, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built.Manifest.FailureSignature.Version = signature.Version + 1
+	manifestData, err := jsonBytes(built.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built.Files["manifest.json"] = manifestData
+	built.Files["checksums.sha256"] = checksumBytes(built.Files)
+	directory := filepath.Join(t.TempDir(), "capsule")
+	if err := built.WriteDirectory(directory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateDirectory(directory); err == nil || !strings.Contains(err.Error(), "unsupported failure signature") {
+		t.Fatalf("accepted unsupported signature: %v", err)
+	}
+}
+
+func TestValidateRequiresAllArtifactsAndSupportedCanonicalEvents(t *testing.T) {
+	for _, scenario := range []string{"missing-execution", "event-schema"} {
+		t.Run(scenario, func(t *testing.T) {
+			input := capsuleInput(t)
+			built, err := Build(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "missing-execution" {
+				delete(built.Files, "execution.json")
+			} else {
+				event := input.Snapshot.Events[0]
+				event.SchemaVersion = model.EventSchemaVersion + 1
+				data, err := jsonBytes(ingest.ExportRecord{Kind: "event", Event: &event})
+				if err != nil {
+					t.Fatal(err)
+				}
+				built.Files["events.jsonl"] = data
+			}
+			built.Manifest.Artifacts = artifactList(built.Files)
+			built.Manifest.CapsuleID = artifactSetDigest(built.Manifest.Artifacts)
+			data, err := jsonBytes(built.Manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			built.Files["manifest.json"] = data
+			built.Files["checksums.sha256"] = checksumBytes(built.Files)
+			directory := filepath.Join(t.TempDir(), "capsule")
+			if err := built.WriteDirectory(directory); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ValidateDirectory(directory); err == nil {
+				t.Fatalf("accepted %s capsule with valid checksums", scenario)
+			}
+		})
 	}
 }

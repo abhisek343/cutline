@@ -180,6 +180,7 @@ func Build(input BuildInput) View {
 	lastCanonical := uint64(0)
 	local := make(map[model.SessionID]uint64)
 	capabilities := make(map[string]bool)
+	var drainOrder uint64
 	for index, event := range v.Events {
 		if event.CanonicalOrder != uint64(index+1) {
 			v.Issues = append(v.Issues, Issue{Code: "canonical_gap", Message: fmt.Sprintf("event order is %d at index %d", event.CanonicalOrder, index+1), EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
@@ -256,6 +257,10 @@ func Build(input BuildInput) View {
 				}
 			}
 		case model.EventEffectDeclared:
+			if _, exists := effects[event.EntityID]; exists {
+				v.Issues = append(v.Issues, Issue{Code: "duplicate_effect", Message: "effect declared twice", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+				continue
+			}
 			effect := &Effect{ID: event.EntityID, OwnerTaskID: event.ParentEntityID, Kind: event.Attributes["kind"], IdempotencyKey: event.Attributes["idempotencyKey"], EvidenceSource: event.Attributes["evidenceSource"], State: model.EffectDeclared, DeclaredOrder: event.CanonicalOrder}
 			effects[event.EntityID] = effect
 			v.Effects = append(v.Effects, *effect)
@@ -276,18 +281,31 @@ func Build(input BuildInput) View {
 				resource.State, resource.ReleasedOrder = model.ResourceReleased, event.CanonicalOrder
 			}
 		case model.EventDrainCompleted:
-			capabilities[CapabilityDrainRegisteredTasks] = true
-			v.Drained = true
+			if drainOrder != 0 {
+				v.Issues = append(v.Issues, Issue{Code: "duplicate_drain", Message: "drain completion was recorded twice", EvidenceOrder: event.CanonicalOrder})
+			} else {
+				drainOrder = event.CanonicalOrder
+			}
 		}
 	}
 	if !capabilities[CapabilityCancellationObserved] && capabilities[CapabilityCancellationRequested] {
 		v.Issues = append(v.Issues, Issue{Code: "cancellation_not_observed", Message: "cancellation was requested but not observed"})
 	}
+	v.Drained = drainOrder > 0
+	for _, registered := range v.Tasks {
+		task := tasks[registered.ID]
+		if task.TerminalOrder == 0 || task.TerminalOrder >= drainOrder || task.State == model.TaskLost {
+			v.Drained = false
+			v.Issues = append(v.Issues, Issue{Code: "task_not_drained", Message: "registered task lacks a known terminal outcome before drain completion", EntityID: task.ID, EvidenceOrder: drainOrder})
+		}
+	}
 	if !v.Drained {
 		v.Issues = append(v.Issues, Issue{Code: "drain_missing", Message: "registered tasks were not drained"})
+	} else {
+		capabilities[CapabilityDrainRegisteredTasks] = true
 	}
 	v.reconcileEffects(input.AuthoritativeEffects, effects)
-	if input.AuthoritativeEffectsComplete && len(effects) == 0 && len(input.AuthoritativeEffects) == 0 && len(v.Issues) == 0 {
+	if input.AuthoritativeEffectsComplete && len(v.Issues) == 0 {
 		v.Capabilities = appendUnique(v.Capabilities, CapabilityAuthoritativeCommit)
 	}
 	for capability := range capabilities {
@@ -332,8 +350,8 @@ func (v *View) setTaskState(tasks map[string]*Task, event model.Event, state mod
 		v.Issues = append(v.Issues, Issue{Code: "missing_task", Message: "task event has no registration", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
 		return
 	}
-	if task.State != model.TaskRegistered && task.State != model.TaskStarted {
-		v.Issues = append(v.Issues, Issue{Code: "task_transition", Message: "task has a terminal state before this event", EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
+	if err := model.ValidateTaskTransition(task.State, state); err != nil {
+		v.Issues = append(v.Issues, Issue{Code: "task_transition", Message: err.Error(), EntityID: event.EntityID, EvidenceOrder: event.CanonicalOrder})
 		return
 	}
 	task.State = state
@@ -377,25 +395,31 @@ func (v *View) reconcileEffects(records []fixtureledger.Record, effects map[stri
 		}
 		authoritative[record.EffectID] = record
 	}
-	hasCommit := false
-	for id, effect := range effects {
-		if effect.State != model.EffectCommitted {
+	// Iterate the projected declaration order so contradictions are reported
+	// deterministically rather than depending on Go map iteration.
+	for _, declared := range v.Effects {
+		effect := effects[declared.ID]
+		record, hasReceipt := authoritative[effect.ID]
+		if effect.State == model.EffectAttempted || effect.State == model.EffectUnknown {
+			v.Issues = append(v.Issues, Issue{Code: "effect_outcome_unknown", Message: "attempted effect lacks a known dependency outcome", EntityID: effect.ID, EvidenceOrder: effect.AttemptOrder})
+		}
+		if effect.CommitOrder > 0 && !hasReceipt {
+			v.Issues = append(v.Issues, Issue{Code: "missing_authoritative_effect", Message: "SDK committed effect has no authoritative receipt", EntityID: effect.ID, EvidenceOrder: effect.CommitOrder})
+		}
+		if !hasReceipt {
 			continue
 		}
-		hasCommit = true
-		if _, ok := authoritative[id]; !ok {
-			v.Issues = append(v.Issues, Issue{Code: "missing_authoritative_effect", Message: "SDK committed effect has no authoritative receipt", EntityID: id, EvidenceOrder: effect.CommitOrder})
+		if record.Kind != effect.Kind || record.Source != effect.EvidenceSource || record.IdempotencyKey != effect.IdempotencyKey {
+			v.Issues = append(v.Issues, Issue{Code: "authoritative_effect_identity", Message: "authoritative receipt kind, source, or idempotency key contradicts the SDK declaration", EntityID: effect.ID})
+		}
+		if effect.CommitOrder == 0 || (effect.State != model.EffectCommitted && effect.State != model.EffectCompensated) {
+			v.Issues = append(v.Issues, Issue{Code: "authoritative_effect_outcome", Message: "authoritative commit contradicts the SDK effect outcome", EntityID: effect.ID})
 		}
 	}
-	for id := range authoritative {
-		if _, ok := effects[id]; !ok {
-			v.Issues = append(v.Issues, Issue{Code: "unknown_authoritative_effect", Message: "authoritative receipt has no SDK effect", EntityID: id})
+	for _, record := range records {
+		if _, ok := effects[record.EffectID]; !ok {
+			v.Issues = append(v.Issues, Issue{Code: "unknown_authoritative_effect", Message: "authoritative receipt has no SDK effect", EntityID: record.EffectID})
 		}
-	}
-	if hasCommit && len(authoritative) > 0 && len(v.Issues) == 0 {
-		// This capability is only true when reconciliation had a chance to
-		// compare both sides and found no contradiction.
-		v.Capabilities = appendUnique(v.Capabilities, CapabilityAuthoritativeCommit)
 	}
 }
 

@@ -192,7 +192,11 @@ func TestRunnerMinimizesNativeFailureSignature(t *testing.T) {
 		t.Fatalf("confirmation attempts = %d, want 2", len(minimized.Attempts))
 	}
 	directory := filepath.Join(t.TempDir(), "capsule")
-	manifest, err := runner.BuildCapsule(spec, campaignResult.Plan.Schedules[0], campaignResult.Schedules[0], minimized, directory)
+	final, err := runner.RunScheduleWithProvenance(ctx, spec, minimized.Minimized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := runner.BuildCapsule(spec, minimized.Minimized, final, minimized, directory)
 	if err != nil {
 		t.Fatal(err)
 	}

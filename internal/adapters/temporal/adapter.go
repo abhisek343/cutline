@@ -96,7 +96,7 @@ func (a Adapter) Translate(input RunHistory) (ingest.Snapshot, error) {
 		items = append(items, item{event: event, identity: workflow.WorkflowID, order: index})
 	}
 	for _, activity := range input.Activities {
-		if activity.RunID != workflow.RunID || activity.AttemptID != workflow.AttemptID {
+		if activity.RunID != workflow.RunID || activity.AttemptID != workflow.AttemptID || activity.SessionID != workflow.SessionID {
 			return ingest.Snapshot{}, fmt.Errorf("activity history identity does not match workflow")
 		}
 		for index, event := range activity.Events {
@@ -185,10 +185,20 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 	case "activity.started":
 		activity = true
 		typ, prefix = model.EventTaskStarted, "task"
-	case "activity.completed", "activity.failed", "activity.canceled":
+	case "activity.completed", "activity.failed", "activity.canceled", "activity.timed_out":
 		activity = true
 		typ, prefix = model.EventTaskFinished, "task"
 		attrs["status"] = strings.TrimPrefix(raw.Type, "activity.")
+		if raw.Type == "activity.canceled" {
+			attrs["status"] = string(model.TaskCancelled)
+		}
+		if raw.Type == "activity.timed_out" {
+			attrs["status"] = string(model.TaskFailed)
+			attrs["cause"] = "timeout"
+			if attrs["temporal.startedEventId"] == "0" {
+				attrs["status"] = string(model.TaskLost)
+			}
+		}
 	case "activity.cancel_requested":
 		activity = true
 		typ, prefix = model.EventCancelRequested, "cancellation"
@@ -212,8 +222,11 @@ func (a Adapter) canonical(workflow WorkflowHistory, raw HistoryEvent, activity 
 		return model.Event{}, false, err
 	}
 	parent := ""
-	if taskName := attrs["taskId"]; taskName != "" {
+	if taskName := attrs["taskId"]; taskName != "" && prefix != "task" {
 		parent, _ = model.ContentID("task", workflow.WorkflowID, taskName)
+	}
+	if typ == model.EventCancelRequested && parent != "" {
+		attrs["targetTask"] = parent
 	}
 	return model.Event{SchemaVersion: model.EventSchemaVersion, RunID: workflow.RunID, AttemptID: workflow.AttemptID, SessionID: workflow.SessionID, Type: typ, EntityID: id, ParentEntityID: parent, ObservedAt: raw.ObservedAt, Attributes: attrs}, true, nil
 }

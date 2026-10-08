@@ -22,6 +22,8 @@ const (
 type Execute func(context.Context, campaign.Campaign, explorer.Schedule) ([]signature.Signature, error)
 
 type Config struct {
+	BaseDirectory       string
+	AdapterVersion      string
 	Campaign            *campaign.Campaign
 	AllowTargetMismatch bool
 	CheckPrerequisites  func([]string) error
@@ -60,19 +62,52 @@ func Run(ctx context.Context, root string, config Config, execute Execute) (Resu
 	if err != nil {
 		return result, fmt.Errorf("parse capsule campaign: %w", err)
 	}
+	recordedDigest, err := recorded.Digest()
+	if err != nil {
+		return result, err
+	}
+	if recordedDigest != manifest.CampaignDigest {
+		return result, fmt.Errorf("capsule campaign digest does not match manifest")
+	}
+	if recorded.Target.Adapter != manifest.Adapter {
+		return result, fmt.Errorf("capsule campaign adapter does not match manifest")
+	}
 	selected := recorded
 	if config.Campaign != nil {
-		targetDigest, digestErr := config.Campaign.TargetDigest()
-		if digestErr != nil {
-			return result, digestErr
-		}
-		if targetDigest != manifest.TargetDigest {
-			if !config.AllowTargetMismatch {
-				return result, fmt.Errorf("target digest mismatch: capsule=%s current=%s", manifest.TargetDigest, targetDigest)
-			}
-			result.Comparative = true
-		}
 		selected = *config.Campaign
+	}
+	currentVersion := config.AdapterVersion
+	if currentVersion == "" {
+		switch selected.Target.Adapter {
+		case "go-test", "go-command":
+			currentVersion = "native/" + selected.Target.Adapter + "/1"
+		default:
+			return result, fmt.Errorf("replay requires the current adapter version for %q", selected.Target.Adapter)
+		}
+	}
+	selectedDigest, err := selected.Digest()
+	if err != nil {
+		return result, err
+	}
+	targetDigest, err := selected.ExecutionDigest(ctx, config.BaseDirectory)
+	if err != nil {
+		return result, fmt.Errorf("establish replay target identity: %w", err)
+	}
+	mismatches := []string{}
+	if targetDigest != manifest.TargetDigest {
+		mismatches = append(mismatches, "target build digest mismatch")
+	}
+	if selectedDigest != manifest.CampaignDigest {
+		mismatches = append(mismatches, "campaign digest mismatch")
+	}
+	if currentVersion != manifest.AdapterVersion || selected.Target.Adapter != manifest.Adapter {
+		mismatches = append(mismatches, "adapter version mismatch")
+	}
+	if len(mismatches) > 0 {
+		if !config.AllowTargetMismatch {
+			return result, fmt.Errorf("incompatible replay: %s; use explicit comparative replay for intentional changes", strings.Join(mismatches, "; "))
+		}
+		result.Comparative = true
 	}
 	scheduleData, err := capsule.ReadArtifact(root, "schedule.json")
 	if err != nil {
@@ -86,10 +121,17 @@ func Run(ctx context.Context, root string, config Config, execute Execute) (Resu
 	if err != nil {
 		return result, fmt.Errorf("execute replay: %w", err)
 	}
+	afterDigest, err := selected.ExecutionDigest(ctx, config.BaseDirectory)
+	if err != nil {
+		return result, fmt.Errorf("verify replay target identity: %w", err)
+	}
+	if afterDigest != targetDigest {
+		return result, fmt.Errorf("target build changed during replay")
+	}
 	result.Observed = append(result.Observed, observed...)
 	for _, value := range observed {
 		if value.Digest == result.Expected.Digest {
-			result.Exact = true
+			result.Exact = !result.Comparative
 			if result.Comparative {
 				result.Status = StatusComparative
 			} else {

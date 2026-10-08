@@ -7,6 +7,10 @@ if [[ $# -ne 1 || -z "$1" ]]; then
 fi
 
 version="$1"
+if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$ ]]; then
+  echo "version must be a release version such as v0.1.0 or v0.1.0-rc.1" >&2
+  exit 2
+fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out_dir="${OUT_DIR:-"$root/dist"}"
 
@@ -22,6 +26,8 @@ trap 'rm -rf "$work_dir"' EXIT
 
 commit="$(git -C "$root" rev-parse --verify HEAD 2>/dev/null || printf unknown)"
 go_version="$(go version)"
+build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+ldflags="-X github.com/abhisek343/cutline/internal/buildinfo.Version=$version -X github.com/abhisek343/cutline/internal/buildinfo.Commit=$commit -X github.com/abhisek343/cutline/internal/buildinfo.Date=$build_date"
 
 for arch in amd64 arm64; do
   package_root="$work_dir/cutline_${version}_linux_${arch}"
@@ -30,7 +36,7 @@ for arch in amd64 arm64; do
   (
     cd "$root"
     GOOS=linux GOARCH="$arch" CGO_ENABLED=0 \
-      go build -trimpath -o "$package_root/cutline" ./cmd/cutline
+      go build -buildvcs=false -trimpath -ldflags "$ldflags" -o "$package_root/cutline" ./cmd/cutline
   )
 
   cp "$root/README.md" "$root/LICENSE" "$package_root/"

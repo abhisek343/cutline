@@ -51,18 +51,19 @@ const (
 )
 
 type Result struct {
-	RunID       model.RunID            `json:"runId"`
-	AttemptID   model.AttemptID        `json:"attemptId"`
-	Status      OverallStatus          `json:"status"`
-	Evaluations []contracts.Result     `json:"evaluations"`
-	Signatures  []signature.Signature  `json:"signatures,omitempty"`
-	Evidence    ingest.Snapshot        `json:"evidence"`
-	View        evidence.View          `json:"view"`
-	Effects     []fixtureledger.Record `json:"effects"`
-	Stdout      string                 `json:"stdout,omitempty"`
-	Stderr      string                 `json:"stderr,omitempty"`
-	ExitCode    int                    `json:"exitCode"`
-	Duration    time.Duration          `json:"duration"`
+	TargetDigest string                 `json:"targetDigest,omitempty"`
+	RunID        model.RunID            `json:"runId"`
+	AttemptID    model.AttemptID        `json:"attemptId"`
+	Status       OverallStatus          `json:"status"`
+	Evaluations  []contracts.Result     `json:"evaluations"`
+	Signatures   []signature.Signature  `json:"signatures,omitempty"`
+	Evidence     ingest.Snapshot        `json:"evidence"`
+	View         evidence.View          `json:"view"`
+	Effects      []fixtureledger.Record `json:"effects"`
+	Stdout       string                 `json:"stdout,omitempty"`
+	Stderr       string                 `json:"stderr,omitempty"`
+	ExitCode     int                    `json:"exitCode"`
+	Duration     time.Duration          `json:"duration"`
 }
 
 type Runner struct {
@@ -160,9 +161,42 @@ func (r Runner) MinimizeSchedule(ctx context.Context, spec campaign.Campaign, sc
 	})
 }
 
+// RunScheduleWithProvenance captures build identity around the final execution.
+// Concurrent target edits are unsupported; detected changes refuse packaging.
+func (r Runner) RunScheduleWithProvenance(ctx context.Context, spec campaign.Campaign, schedule explorer.Schedule) (Result, error) {
+	before, err := spec.ExecutionDigest(ctx, r.BaseDirectory)
+	if err != nil {
+		return Result{}, err
+	}
+	result, err := r.RunSchedule(ctx, spec, schedule)
+	if err != nil {
+		return result, err
+	}
+	after, err := spec.ExecutionDigest(ctx, r.BaseDirectory)
+	if err != nil {
+		return result, err
+	}
+	if before != after {
+		return result, fmt.Errorf("target build changed during final execution")
+	}
+	result.TargetDigest = after
+	return result, nil
+}
+
 func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule, result Result, minimization minimize.Result, destination string) (capsule.Manifest, error) {
+	if result.TargetDigest == "" {
+		return capsule.Manifest{}, fmt.Errorf("capsule execution has no build identity; rerun with provenance")
+	}
+	current, err := spec.ExecutionDigest(context.Background(), r.BaseDirectory)
+	if err != nil {
+		return capsule.Manifest{}, err
+	}
+	if current != result.TargetDigest {
+		return capsule.Manifest{}, fmt.Errorf("target build changed after final execution")
+	}
 	return capsule.BuildDirectory(capsule.Input{
-		Campaign: spec, RunID: result.RunID, AttemptID: result.AttemptID,
+		TargetDigest: result.TargetDigest,
+		Campaign:     spec, RunID: result.RunID, AttemptID: result.AttemptID,
 		Execution: capsule.Execution{Status: string(result.Status), ExitCode: result.ExitCode, Duration: result.Duration},
 		Schedule:  schedule, Snapshot: result.Evidence, View: result.View, Effects: result.Effects,
 		Evaluations: result.Evaluations, Signatures: result.Signatures, FailureSignature: minimization.Target, Minimization: &minimization, AdapterVersion: r.adapterVersion(spec),
@@ -170,6 +204,10 @@ func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule,
 }
 
 func (r Runner) ReplayCapsule(ctx context.Context, root string, config replay.Config) (replay.Result, error) {
+	config.BaseDirectory = r.BaseDirectory
+	if config.AdapterVersion == "" {
+		config.AdapterVersion = r.AdapterVersion
+	}
 	return replay.Run(ctx, root, config, func(candidateContext context.Context, spec campaign.Campaign, schedule explorer.Schedule) ([]signature.Signature, error) {
 		result, err := r.RunSchedule(candidateContext, spec, schedule)
 		if err != nil {
@@ -274,6 +312,7 @@ func (r Runner) runWithPolicy(ctx context.Context, spec campaign.Campaign, polic
 	for key, value := range r.Environment {
 		targetExtra[key] = value
 	}
+	targetExtra["CUTLINE_DRAIN_TIMEOUT"] = spec.Exploration.DrainTimeout.Value().String()
 	if discovery {
 		targetExtra["CUTLINE_DISCOVERY"] = "1"
 	}

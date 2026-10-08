@@ -47,6 +47,28 @@ func (r Runner) RunSchedule(ctx context.Context, spec campaign.Campaign, schedul
 	return inner.RunSchedule(ctx, prepared, schedule)
 }
 
+// RunScheduleWithProvenance captures the actual target build around execution
+// using the original Temporal descriptor rather than its protocol delegate.
+func (r Runner) RunScheduleWithProvenance(ctx context.Context, spec campaign.Campaign, schedule explorer.Schedule) (native.Result, error) {
+	before, err := spec.ExecutionDigest(ctx, r.BaseDirectory)
+	if err != nil {
+		return native.Result{}, err
+	}
+	result, err := r.RunSchedule(ctx, spec, schedule)
+	if err != nil {
+		return result, err
+	}
+	after, err := spec.ExecutionDigest(ctx, r.BaseDirectory)
+	if err != nil {
+		return result, err
+	}
+	if before != after {
+		return result, fmt.Errorf("target build changed during final execution")
+	}
+	result.TargetDigest = after
+	return result, nil
+}
+
 func (r Runner) RunCampaign(ctx context.Context, spec campaign.Campaign) (native.CampaignResult, error) {
 	prepared, inner, err := r.prepare(spec)
 	if err != nil {
@@ -72,6 +94,12 @@ func (r Runner) BuildCapsule(spec campaign.Campaign, schedule explorer.Schedule,
 }
 
 func (r Runner) ReplayCapsule(ctx context.Context, root string, config replay.Config) (replay.Result, error) {
+	if config.BaseDirectory == "" {
+		config.BaseDirectory = r.BaseDirectory
+	}
+	if config.AdapterVersion == "" {
+		config.AdapterVersion = AdapterMajorVersion
+	}
 	return replay.Run(ctx, root, config, func(candidate context.Context, spec campaign.Campaign, schedule explorer.Schedule) ([]signature.Signature, error) {
 		result, err := r.RunSchedule(candidate, spec, schedule)
 		if err != nil {

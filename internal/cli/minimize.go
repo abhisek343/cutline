@@ -60,6 +60,7 @@ func newMinimizeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			unsignedViolation := false
 			for _, schedule := range plan.Schedules {
 				result, runErr := runner.RunSchedule(cmd.Context(), spec, schedule)
 				if runErr != nil {
@@ -67,6 +68,9 @@ func newMinimizeCommand() *cobra.Command {
 				}
 				target, found := selectSignature(result.Signatures, requestedDigest)
 				if !found {
+					if len(result.Signatures) == 0 && result.Status == "violation" {
+						unsignedViolation = true
+					}
 					continue
 				}
 				minimized, minErr := runner.MinimizeSchedule(cmd.Context(), spec, schedule, target, minimize.Config{MaxAttempts: maxAttempts, Confirmations: confirmations})
@@ -76,10 +80,17 @@ func newMinimizeCommand() *cobra.Command {
 				if !minimized.Stable {
 					return fmt.Errorf("minimization for %s did not reproduce %s stably", schedule.ID, target.Digest)
 				}
-				if _, buildErr := runner.BuildCapsule(spec, schedule, result, minimized, destination); buildErr != nil {
+				final, finalErr := runner.RunScheduleWithProvenance(cmd.Context(), spec, minimized.Minimized)
+				if finalErr != nil {
+					return fmt.Errorf("rerun minimized schedule: %w", finalErr)
+				}
+				if _, found := selectSignature(final.Signatures, target.Digest); !found {
+					return fmt.Errorf("final minimized execution did not reproduce signature %s", target.Digest)
+				}
+				if _, buildErr := runner.BuildCapsule(spec, minimized.Minimized, final, minimized, destination); buildErr != nil {
 					return fmt.Errorf("write minimized capsule: %w", buildErr)
 				}
-				out := minimizeOutput{Campaign: spec.Name, Schedule: schedule, Signature: target, Minimization: minimized, Capsule: destination}
+				out := minimizeOutput{Campaign: spec.Name, Schedule: minimized.Minimized, Signature: target, Minimization: minimized, Capsule: destination}
 				if outputJSON {
 					if err := json.NewEncoder(cmd.OutOrStdout()).Encode(out); err != nil {
 						return err
@@ -89,10 +100,13 @@ func newMinimizeCommand() *cobra.Command {
 				}
 				return ErrViolation
 			}
+			if unsignedViolation {
+				return fmt.Errorf("campaign %q found a violation, but minimization is unavailable: no supported effect witness with a stable idempotency identity", spec.Name)
+			}
 			if requestedDigest != "" {
 				return fmt.Errorf("no violation with signature %s was found", requestedDigest)
 			}
-			return fmt.Errorf("campaign %q produced no violation to minimize", spec.Name)
+			return fmt.Errorf("campaign %q produced no violation with a supported effect witness to minimize", spec.Name)
 		},
 	}
 	command.Flags().StringVarP(&campaignPath, "campaign", "c", "", "path to campaign YAML")

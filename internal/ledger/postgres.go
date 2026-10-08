@@ -40,6 +40,11 @@ func NewPostgres(ctx context.Context, dsn string, config AttemptConfig) (*Postgr
 	if err := validateAttemptConfig(dsn, config); err != nil {
 		return nil, err
 	}
+	if config.OperationTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, config.OperationTimeout)
+		defer cancel()
+	}
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse PostgreSQL DSN: %w", err)
@@ -186,7 +191,7 @@ func (p *Postgres) Append(event model.Event) (model.Event, error) {
 		return model.Event{}, ingest.ErrFrozen
 	}
 	if p.maxEvents > 0 && next > uint64(p.maxEvents) {
-		return model.Event{}, ingest.ErrEventLimit
+		return model.Event{}, p.rejectIncomplete(ctx, tx, ingest.ErrEventLimit.Error(), ingest.ErrEventLimit)
 	}
 	var last uint64
 	if err := tx.QueryRow(ctx, `
@@ -198,11 +203,15 @@ func (p *Postgres) Append(event model.Event) (model.Event, error) {
 		return model.Event{}, ingest.ErrDuplicate
 	}
 	if event.LocalSequence != last+1 {
-		return model.Event{}, ingest.ErrSequenceGap
+		reason := fmt.Sprintf("%v: session %s got %d after %d", ingest.ErrSequenceGap, event.SessionID, event.LocalSequence, last)
+		return model.Event{}, p.rejectIncomplete(ctx, tx, reason, ingest.ErrSequenceGap)
 	}
 	attributes, err := json.Marshal(event.Attributes)
 	if err != nil {
 		return model.Event{}, fmt.Errorf("marshal event attributes: %w", err)
+	}
+	if event.Attributes == nil {
+		attributes = []byte(`{}`)
 	}
 	event.CanonicalOrder = next
 	if _, err := tx.Exec(ctx, `
@@ -231,16 +240,47 @@ func (p *Postgres) MarkIncomplete(reason string) error {
 	}
 	ctx, cancel := p.operationContext(context.Background())
 	defer cancel()
-	_, err := p.pool.Exec(ctx, `
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin incomplete evidence: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM run_attempts WHERE run_id=$1 AND attempt_id=$2 FOR UPDATE`, p.runID, p.attemptID).Scan(&state); err != nil {
+		return fmt.Errorf("lock incomplete evidence: %w", err)
+	}
+	if state != "open" {
+		return ingest.ErrFrozen
+	}
+	if err := p.recordIncomplete(ctx, tx, reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit incomplete evidence: %w", err)
+	}
+	return nil
+}
+
+func (p *Postgres) recordIncomplete(ctx context.Context, tx pgx.Tx, reason string) error {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO evidence_incomplete_reasons (run_id, attempt_id, reason)
 		VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, p.runID, p.attemptID, reason)
 	if err != nil {
-		if strings.Contains(err.Error(), "frozen") {
-			return ingest.ErrFrozen
-		}
 		return fmt.Errorf("record incomplete evidence: %w", err)
 	}
 	return nil
+}
+
+// Rejected evidence still records the gap while holding the attempt lock, so
+// Freeze cannot turn a sequence gap or a truncated stream into complete evidence.
+func (p *Postgres) rejectIncomplete(ctx context.Context, tx pgx.Tx, reason string, rejection error) error {
+	if err := p.recordIncomplete(ctx, tx, reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit rejected evidence: %w", err)
+	}
+	return rejection
 }
 
 func (p *Postgres) Current() ([]model.Event, error) {
