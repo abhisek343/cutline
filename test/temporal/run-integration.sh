@@ -13,7 +13,7 @@ cleanup() {
 
 trap cleanup EXIT
 docker compose -f "$compose_file" up --detach --wait
-"${GO:-go}" test -tags=temporal_integration ./internal/adapters/temporal -run TestLiveFetch -count=1 -timeout=2m
+"${GO:-go}" test -v -tags=temporal_integration ./internal/adapters/temporal -run TestLiveFetch -count=1 -timeout=2m
 "${GO:-go}" build -buildvcs=false -o ./bin/cutline ./cmd/cutline
 ./bin/cutline run --campaign test/fixtures/temporalcheckout/campaign-clean.yaml
 if ./bin/cutline run --campaign test/fixtures/temporalcheckout/campaign-faulty.yaml; then
@@ -76,7 +76,7 @@ assert target["adapter"] == "temporal" and target["adapterVersion"] == "temporal
 report = json.loads((root / "report.json").read_text())
 assert report["signature"]["digest"] == digest, report
 assert report["schedule"] == schedule, report
-assert report["status"] == "violated", report
+assert report["status"] == "violation", report
 assert not report["view"]["issues"] and not report["view"]["incompleteReasons"], report
 evaluations = json.loads((capsule / "evaluation.json").read_text())
 assert report["evaluations"] == evaluations, report
